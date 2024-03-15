@@ -13,6 +13,7 @@ fn main() {
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
+                eprintln!("New connection from: {}", stream.peer_addr().unwrap());
                 handle_stream(stream);
             }
             Err(e) => {
@@ -23,13 +24,20 @@ fn main() {
 }
 
 fn handle_stream(mut stream: std::net::TcpStream) -> std::io::Result<()> {
-    // Your code here
-    eprintln!("New connection from: {}", stream.peer_addr().unwrap());
-    let mut buf = [0; 1024];
-    let client_message = stream.read(&mut buf)?;
-    eprintln!("Received: {}", String::from_utf8_lossy(&buf[..client_message]));
-    let server_message = "+PONG\r\n".as_bytes();
-    stream.write_all(server_message)?;
-    eprintln!("Sent: {}", String::from_utf8_lossy(server_message));
-     Ok(())
+    loop {
+        let mut buf = [0; 1024];
+        let client_message = stream.read(&mut buf)?;
+
+        if client_message == 0 {
+            eprintln!("Connection closed");
+            return Ok(());
+        }
+
+        eprintln!("Received: {}", String::from_utf8_lossy(&buf[..client_message]));
+        let server_message = "+PONG\r\n".as_bytes();
+        stream.write_all(server_message)?;
+        eprintln!("Sent: {}", String::from_utf8_lossy(server_message));
+    }
+    
+    Ok(())
 }
