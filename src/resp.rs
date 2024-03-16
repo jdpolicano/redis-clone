@@ -15,16 +15,18 @@ use bytes::{BytesMut, BufMut};
 // Maps	            RESP3	                    Aggregate	%
 // Sets	            RESP3	                    Aggregate	~
 // Pushes	        RESP3	                    Aggregate	>
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Resp {
+    // these are required to be utf8 encoded, hence they are strings instead of u8s
     SimpleString(String),
+    // these are required to be utf8 encoded, hence they are strings instead of u8s
     SimpleError(String),
     Integer(i64),
     BulkString(Vec<u8>),
     BulkStringNull,
     Array(Vec<Resp>),
     ArrayNull,
-    Null, // could be null string or null error...
+    Null,
     Boolean(bool),
     Double(f64),
     BigNumber(Vec<u8>), 
@@ -35,11 +37,11 @@ pub enum Resp {
     Push(Vec<Resp>),
 }
 
+
 pub struct RespParser {
     data: BytesMut,
     index: usize,
 }
-
 
 impl RespParser {
     pub fn new(data: BytesMut) -> RespParser {
@@ -162,6 +164,15 @@ impl RespParser {
             "nan" => Ok(Resp::Double(f64::NAN)),
             other => {
                 let float = other.parse::<f64>().map_err(|e| e.to_string())?;
+
+                if float.is_infinite() {
+                    return Err(format!("float {} is infinite, but not inf", float));
+                }
+
+                if float.is_nan() {
+                    return Err(format!("float {} is nan, but not nan", float));
+                }
+
                 Ok(Resp::Double(float))
             }
         }

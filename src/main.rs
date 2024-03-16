@@ -4,6 +4,9 @@ use tokio::io::{ AsyncReadExt, AsyncWriteExt };
 use bytes::BytesMut;
 use std::io::{ self };
 use redis_starter_rust::resp::{ RespParser, Resp, RespEncoder};
+use redis_starter_rust::database::{ Database, DbType };
+use std::sync::Arc;
+
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
@@ -11,16 +14,18 @@ async fn main() -> io::Result<()> {
     println!("Logs from your program will appear here!");
     // Uncomment this block to pass the first stage
     let listener = TcpListener::bind("127.0.0.1:6379").await?;
+    let mut database = Arc::new(Database::new());
 
     loop {
         let (stream, _) = listener.accept().await?;
+        let db = database.clone();
         tokio::spawn(async move {
-            let _ = handle_stream(stream).await;
+            let _ = handle_stream(stream, db).await;
         });
     }
 }
 
-async fn handle_stream(mut stream: TcpStream) -> io::Result<()>  {
+async fn handle_stream(mut stream: TcpStream, db: Arc<Database>) -> io::Result<()>  {
     let mut buffer = BytesMut::new();
 
     loop {
@@ -39,52 +44,32 @@ async fn handle_stream(mut stream: TcpStream) -> io::Result<()>  {
 
         if let Ok(cmd) = parser.parse() {
             eprintln!("Parsed: {:?}", cmd);
-            handle_command(&mut stream, cmd).await?;
+            handle_command(&mut stream, cmd, db.clone()).await?;
         } else {
             eprintln!("Failed to parse");
         }
     }
 }
 
-async fn handle_command(stream: &mut TcpStream, cmd: Resp) -> io::Result<()> {
+async fn handle_command(stream: &mut TcpStream, cmd: Resp, db: Arc<Database>) -> io::Result<()> {
     match cmd {
-        Resp::Array(args_vec) => route_command(stream, args_vec).await,
-        _ => {
-            // minor overhead to create new string, but most of the time we won't hit this
-            // because we'll be taking an in meory buffer copy of Resp...
-            let mut buf = BytesMut::new();
-            RespEncoder::encode_simple_string("ERR no array arguments", &mut buf);
-            stream.write_all(&buf).await?;
-            Ok(())
-        }
+        Resp::Array(args_vec) => route_command(stream, args_vec, db).await,
+        _ => Err(invalid_input("ERR invalid client type, expected Array"))
     }
 }
 
-async fn route_command(stream: &mut TcpStream, args: Vec<Resp>) -> io::Result<()> {
-    let mut arguments = Vec::new();
-    for arg in args {
-        match arg {
-            Resp::BulkString(s) => {
-                let as_str = String::from_utf8(s).map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "Invalid UTF-8"))?;
-                eprintln!("BulkString: {}", as_str);
-                arguments.push(as_str);
-            }
-            _ => {
-                eprintln!("Invalid argument: {:?}", arg);
-                // return some kind of io related error...
-                return Err(io::Error::new(io::ErrorKind::InvalidInput, "Invalid argument type"))
-            }
-        }
-    }
+async fn route_command(stream: &mut TcpStream, mut cmd_args: Vec<Resp>, db: Arc<Database>) -> io::Result<()>  {
+    //reverse the order of the arguments
+    // now order is [arg3 arg2 arg1 command]
+    cmd_args.reverse();
+    let last = cmd_args
+        .pop()
+        .ok_or("ERR No command".to_string())
+        .map_err(|e| invalid_input(&e.to_string()))?;
 
-    if arguments.is_empty() {
-        let mut buf = BytesMut::new();
-        RespEncoder::encode_simple_string("ERR no command", &mut buf);
-        stream.write_all(&buf).await?;
-        return Ok(());
-    }
+    let command = bulk_to_string(last)?;
 
-    match arguments[0].to_lowercase().as_str() {
+    match command.to_lowercase().as_str() {
         "ping" => {
             let mut buf = BytesMut::new();
             RespEncoder::encode_simple_string("PONG", &mut buf);
@@ -92,13 +77,55 @@ async fn route_command(stream: &mut TcpStream, args: Vec<Resp>) -> io::Result<()
         }
         "echo" => {
             let mut buf = BytesMut::new();
-            let rest = arguments[1..].join(" ");
-            RespEncoder::encode_bulk_string(rest.as_bytes(), &mut buf);
+            let rest = cmd_args
+                .pop()
+                .ok_or(invalid_input("ERR No echo value"))?;
+
+            RespEncoder::encode_resp(&rest, &mut buf);
+            stream.write_all(&buf).await?;
+        }
+        "set" => {
+            // take the first two elements for now...
+            let (key, value) = (cmd_args.pop(), cmd_args.pop());
+
+            if key.is_none() || value.is_none() {
+                return Err(invalid_input("key or value missing"))
+            }
+
+            let string_key = DbType::from_resp(key.unwrap()).ok_or(invalid_input("ERR invalid key type"))?;
+            let value = DbType::from_resp(value.unwrap()).ok_or(invalid_input("ERR invalid value type"))?;
+            
+            db.set(string_key, value);
+
+            let mut buf = BytesMut::new();
+            RespEncoder::encode_simple_string("OK", &mut buf);
+            stream.write_all(&buf).await?;
+        }
+
+        "get" => {
+            let key = cmd_args.pop().ok_or(invalid_input("ERR No key"))?;
+            let string_key = DbType::from_resp(key).ok_or(invalid_input("ERR invalid key type"))?;
+            let value = db.get(&string_key).unwrap_or(DbType::String(Vec::new()));
+
+            let mut buf = BytesMut::new();
+            RespEncoder::encode_bulk_string(&value.to_bulk_str().unwrap(), &mut buf);
             stream.write_all(&buf).await?;
         }
         _ => { todo!("Implement the rest of the commands") }
     }
-    Ok(())
+    return Ok(());
+} 
+
+fn bulk_to_string(resp: Resp) -> io::Result<String> {
+    if let Resp::BulkString(bytes) = resp {
+        return String::from_utf8(bytes).map_err(|e| invalid_input(&e.to_string()));
+    } else {
+        return Err(invalid_input("ERR unexpected RESP type"))
+    }
+}
+
+fn invalid_input(e: &str) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidInput, e)
 }
 // async fn handle_command(stream: &mut TcpStream, cmd: Resp) -> io::Result<()> {
 //     let response = Resp::Array(vec![Resp::SimpleString("OK".to_string())]);
