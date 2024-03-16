@@ -44,7 +44,16 @@ async fn handle_stream(mut stream: TcpStream, db: Arc<Database>) -> io::Result<(
 
         if let Ok(cmd) = parser.parse() {
             eprintln!("Parsed: {:?}", cmd);
-            handle_command(&mut stream, cmd, db.clone()).await?;
+            match handle_command(&mut stream, cmd, db.clone()).await {
+                Ok(_) => {
+                    buffer.clear();
+                }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    buffer.clear();
+                    return Err(e);
+                }
+            }
         } else {
             eprintln!("Failed to parse");
         }
