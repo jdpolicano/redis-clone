@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use crate::resp::{Resp};
 use std::sync::{Arc, Mutex};
 
-#[derive(Eq, Hash, PartialEq, Clone)]
+#[derive(Eq, Hash, PartialEq, Clone, Debug)]
 pub enum DbType {
     String(Vec<u8>),
     List,
@@ -23,10 +23,24 @@ impl DbType {
         }
     }
 
-    pub fn to_bulk_str(&self) -> Option<Vec<u8>> {
+    pub fn to_bytes(&self) -> Option<Vec<u8>> {
         match self {
             DbType::String(b) => Some(b.clone()),
             _ => None,
+        }
+    }
+
+    pub fn is_string(&self) -> bool {
+        match self {
+            DbType::String(b) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_none(&self) -> bool {
+        match self {
+            DbType::None => true,
+            _ => false,
         }
     }
 }

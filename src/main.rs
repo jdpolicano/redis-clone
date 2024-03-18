@@ -3,142 +3,118 @@ use tokio::net::{ TcpListener, TcpStream };
 use tokio::io::{ AsyncReadExt, AsyncWriteExt };
 use bytes::BytesMut;
 use std::io::{ self };
+use redis_starter_rust::server::{ RedisServer, write_simple_error, client_resp_to_string };
 use redis_starter_rust::resp::{ RespParser, Resp, RespEncoder};
 use redis_starter_rust::database::{ Database, DbType };
+use redis_starter_rust::context::Context;
+use redis_starter_rust::command::{Command, PingCommand, EchoCommand, SetCommand, GetCommand};
 use std::sync::Arc;
 
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
-    // You can use print statements as follows for debugging, they'll be visible when running tests.
-    println!("Logs from your program will appear here!");
-    // Uncomment this block to pass the first stage
-    let listener = TcpListener::bind("127.0.0.1:6379").await?;
-    let mut database = Arc::new(Database::new());
-
+    let mut server = RedisServer::new("127.0.0.1:6379").await?;
     loop {
-        let (stream, _) = listener.accept().await?;
-        let db = database.clone();
+        let (stream, addr) = server.listener.accept().await?;
+        let db = server.database.clone();
         tokio::spawn(async move {
-            let _ = handle_stream(stream, db).await;
+            let ctx = Context::new(db, stream, addr);
+            let _ = handle_stream(ctx).await;
         });
     }
 }
 
-async fn handle_stream(mut stream: TcpStream, db: Arc<Database>) -> io::Result<()>  {
-    let mut buffer = BytesMut::new();
+async fn handle_stream(mut ctx: Context) -> io::Result<()>  {
+        let mut buffer = BytesMut::new();
+        let mut success = false;
 
-    loop {
-        let mut chunk = [0; 1024];
-        let nbytes = stream.read(&mut chunk).await?;
-
-        if nbytes == 0 {
-            return Ok(());
-        }
-
-        buffer.extend_from_slice(&chunk[..nbytes]);
-
-        let mut parser = RespParser::new(buffer.clone());
-
-        if let Ok(cmd) = parser.parse() {
-            eprintln!("Parsed: {:?}", cmd);
-            match handle_command(&mut stream, cmd, db.clone()).await {
-                Ok(_) => {
-                    buffer.clear();
+        loop {
+            let mut chunk = [0; 1024];
+            let nbytes = ctx.stream.read(&mut chunk).await?;
+    
+            if nbytes == 0 {
+                ctx.log("client stream EOF");
+                if !success {
+                  ctx.log("unable to parse client message");
                 }
-                Err(e) => {
-                    eprintln!("Error: {}", e);
-                    buffer.clear();
-                    return Err(e);
+                return Ok(());
+            }
+    
+            buffer.extend_from_slice(&chunk[..nbytes]);
+    
+            let mut parser = RespParser::new(buffer.clone());
+    
+            if let Ok(cmd) = parser.parse() {
+                success = true;
+                ctx.log(&format!("Parsed: {:?}", cmd));
+                match handle_command(cmd, &mut ctx).await {
+                    Ok(_) => {
+                        buffer.clear();
+                    }
+                    Err(e) => {
+                        println!("{:?}", e);
+                        let e_msg = &format!("Error: {}", e);
+                        ctx.log(e_msg);
+                        write_simple_error(&mut ctx.stream, e_msg).await?;
+                        buffer.clear();
+                    }
                 }
+            } else {
+                ctx.log("partial stream, failed to parse");
             }
-        } else {
-            eprintln!("Failed to parse");
         }
-    }
 }
 
-async fn handle_command(stream: &mut TcpStream, cmd: Resp, db: Arc<Database>) -> io::Result<()> {
-    match cmd {
-        Resp::Array(args_vec) => route_command(stream, args_vec, db).await,
-        _ => Err(invalid_input("ERR invalid client type, expected Array"))
-    }
+async fn handle_command(cmd: Resp, ctx: &mut Context) -> io::Result<()> {
+        match cmd {
+            Resp::Array(mut a) => {
+                if a.len() == 0 {
+                    let msg = "ERR empty command";
+                    ctx.log(msg);
+                    return Err(io::Error::new(io::ErrorKind::InvalidInput, msg));
+                }
+
+                // reverse the arguments so we can pop them out in the correct order..
+                a.reverse();
+
+                // this is okay because we confired array isn't empty already.
+                let cmd_name = client_resp_to_string(a.pop().unwrap())?;
+
+                match cmd_name.to_uppercase().as_str() {
+                    "ECHO" => { return echo(a, ctx).await },
+                    "PING" => { return ping(ctx).await },
+                    "SET" => { return set(a, ctx).await },
+                    "GET" => { return get(a, ctx).await },
+                    _ => { return Err(io::Error::new(io::ErrorKind::InvalidInput, "Unknown command")) }
+                }
+            },
+
+              _ => Err(io::Error::new(io::ErrorKind::InvalidInput, "Err invalid client input, expected array of bulk strings..."))
+          }
 }
 
-async fn route_command(stream: &mut TcpStream, mut cmd_args: Vec<Resp>, db: Arc<Database>) -> io::Result<()>  {
-    // reverse the order of the arguments
-    // now order is [arg3 arg2 arg1 command]
-    cmd_args.reverse();
-    let last = cmd_args
-        .pop()
-        .ok_or("ERR No command".to_string())
-        .map_err(|e| invalid_input(&e.to_string()))?;
-
-    let command = bulk_to_string(last)?;
-
-    match command.to_lowercase().as_str() {
-        "ping" => {
-            let mut buf = BytesMut::new();
-            RespEncoder::encode_simple_string("PONG", &mut buf);
-            stream.write_all(&buf).await?;
-        }
-        "echo" => {
-            let mut buf = BytesMut::new();
-            let rest = cmd_args
-                .pop()
-                .ok_or(invalid_input("ERR No echo value"))?;
-
-            RespEncoder::encode_resp(&rest, &mut buf);
-            stream.write_all(&buf).await?;
-        }
-        "set" => {
-            // take the first two elements for now...
-            let (key, value) = (cmd_args.pop(), cmd_args.pop());
-
-            if key.is_none() || value.is_none() {
-                return Err(invalid_input("key or value missing"))
-            }
-
-            let string_key = DbType::from_resp(key.unwrap()).ok_or(invalid_input("ERR invalid key type"))?;
-            let value = DbType::from_resp(value.unwrap()).ok_or(invalid_input("ERR invalid value type"))?;
-            
-            db.set(string_key, value);
-
-            let mut buf = BytesMut::new();
-            RespEncoder::encode_simple_string("OK", &mut buf);
-            stream.write_all(&buf).await?;
-        }
-
-        "get" => {
-            let key = cmd_args.pop().ok_or(invalid_input("ERR No key"))?;
-            let string_key = DbType::from_resp(key).ok_or(invalid_input("ERR invalid key type"))?;
-            let value = db.get(&string_key).unwrap_or(DbType::String(Vec::new()));
-
-            let mut buf = BytesMut::new();
-            RespEncoder::encode_bulk_string(&value.to_bulk_str().unwrap(), &mut buf);
-            stream.write_all(&buf).await?;
-        }
-        _ => { todo!("Implement the rest of the commands") }
-    }
-    return Ok(());
-} 
-
-fn bulk_to_string(resp: Resp) -> io::Result<String> {
-    if let Resp::BulkString(bytes) = resp {
-        return String::from_utf8(bytes).map_err(|e| invalid_input(&e.to_string()));
-    } else {
-        return Err(invalid_input("ERR unexpected RESP type"))
-    }
+// args is still encoded as Resp at this point in time...
+async fn echo(mut args: Vec<Resp>, ctx: &mut Context) -> io::Result<()> {
+  let mut e = EchoCommand::new(args.pop());
+  e.execute(ctx).await;
+  Ok(())
 }
 
-fn invalid_input(e: &str) -> io::Error {
-    io::Error::new(io::ErrorKind::InvalidInput, e)
+async fn ping(ctx: &mut Context) -> io::Result<()> {
+  let mut p = PingCommand::new();
+  p.execute(ctx).await;
+  Ok(())
 }
-// async fn handle_command(stream: &mut TcpStream, cmd: Resp) -> io::Result<()> {
-//     let response = Resp::Array(vec![Resp::SimpleString("OK".to_string())]);
-//     let mut encoder = RespEncoder::new();
-//     let mut buffer = BytesMut::new();
-//     encoder.encode(&response, &mut buffer).unwrap();
-//     stream.write_all(&buffer).await?;
-//     Ok(())
-// }
+
+
+async fn set(mut args: Vec<Resp>, ctx: &mut Context) -> io::Result<()> {
+  let mut s = SetCommand::new(args);
+  s.execute(ctx).await;
+  Ok(())
+}
+
+async fn get(mut args: Vec<Resp>, ctx: &mut Context) -> io::Result<()> {
+  let mut g = GetCommand::new(args.pop());
+  g.execute(ctx).await;
+  Ok(())
+}
