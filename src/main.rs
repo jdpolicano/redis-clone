@@ -1,19 +1,18 @@
 // Uncomment this block to pass the first stage
-use tokio::net::{ TcpListener, TcpStream };
-use tokio::io::{ AsyncReadExt, AsyncWriteExt };
+
+use tokio::io::{ AsyncReadExt };
 use bytes::BytesMut;
 use std::io::{ self };
 use redis_starter_rust::server::{ RedisServer, write_simple_error, client_resp_to_string };
-use redis_starter_rust::resp::{ RespParser, Resp, RespEncoder};
-use redis_starter_rust::database::{ Database, DbType };
+use redis_starter_rust::resp::{ RespParser, Resp};
 use redis_starter_rust::context::Context;
 use redis_starter_rust::command::{Command, PingCommand, EchoCommand, SetCommand, GetCommand};
-use std::sync::Arc;
+
 
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
-    let mut server = RedisServer::new("127.0.0.1:6379").await?;
+    let server = RedisServer::new("127.0.0.1:6379").await?;
     loop {
         let (stream, addr) = server.listener.accept().await?;
         let db = server.database.clone();
@@ -95,26 +94,26 @@ async fn handle_command(cmd: Resp, ctx: &mut Context) -> io::Result<()> {
 
 // args is still encoded as Resp at this point in time...
 async fn echo(mut args: Vec<Resp>, ctx: &mut Context) -> io::Result<()> {
-  let mut e = EchoCommand::new(args.pop());
+  let e = EchoCommand::new(args.pop());
   e.execute(ctx).await;
   Ok(())
 }
 
 async fn ping(ctx: &mut Context) -> io::Result<()> {
-  let mut p = PingCommand::new();
+  let p = PingCommand::new();
   p.execute(ctx).await;
   Ok(())
 }
 
 
-async fn set(mut args: Vec<Resp>, ctx: &mut Context) -> io::Result<()> {
-  let mut s = SetCommand::new(args);
+async fn set(args: Vec<Resp>, ctx: &mut Context) -> io::Result<()> {
+  let s = SetCommand::new(args);
   s.execute(ctx).await;
   Ok(())
 }
 
 async fn get(mut args: Vec<Resp>, ctx: &mut Context) -> io::Result<()> {
-  let mut g = GetCommand::new(args.pop());
+  let g = GetCommand::new(args.pop());
   g.execute(ctx).await;
   Ok(())
 }

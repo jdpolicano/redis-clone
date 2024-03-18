@@ -1,6 +1,6 @@
 // Uncomment this block to pass the first stage
 use tokio::net::{ TcpListener, TcpStream };
-use tokio::io::{ AsyncReadExt, AsyncWriteExt };
+use tokio::io::{ AsyncWriteExt };
 use bytes::BytesMut;
 use std::io::{ self };
 use crate::resp::{ Resp, RespEncoder};

@@ -32,7 +32,7 @@ impl DbType {
 
     pub fn is_string(&self) -> bool {
         match self {
-            DbType::String(b) => true,
+            DbType::String(_) => true,
             _ => false,
         }
     }

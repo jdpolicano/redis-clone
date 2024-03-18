@@ -1,16 +1,14 @@
-use std::sync::Arc;
-use tokio::io::{self, AsyncWriteExt, AsyncReadExt};
-use tokio::net::TcpStream;
+use tokio::io::AsyncWriteExt;
 use bytes::BytesMut;
-use crate::database::{ Database, DbType };
-use crate::resp::{Resp, RespParser, RespEncoder};
+use crate::database::{ DbType };
+use crate::resp::{Resp, RespEncoder};
 use crate::server::{ write_simple_error };
 use crate::context::Context;
 
 // Command trait to represent any executable command.
 // commands must be no
 pub trait Command {
-    async fn execute(self, ctx: &mut Context);
+    fn execute(self, ctx: &mut Context) -> impl std::future::Future<Output = ()> + Send;
 }
 
 // Implement the Command trait for different commands
@@ -54,7 +52,7 @@ impl Command for EchoCommand {
         } else {
             let msg = "ERR no value to echo";
             ctx.log(msg);
-            write_simple_error(&mut ctx.stream, msg).await;
+            let _ = write_simple_error(&mut ctx.stream, msg).await;
         }
     }
 }
@@ -68,7 +66,7 @@ impl SetCommand {
       if key.is_none() || value.is_none() {
           let e_msg = "Err SET requires key and value";
           ctx.log(e_msg);
-          write_simple_error(&mut ctx.stream, e_msg);
+          let _ = write_simple_error(&mut ctx.stream, e_msg).await;
           return (DbType::None, DbType::None);
       }
 
@@ -78,7 +76,7 @@ impl SetCommand {
       if k.is_none() || v.is_none() {
           let e_msg = "Err SET key/value isn't bulk string";
           ctx.log(e_msg);
-          write_simple_error(&mut ctx.stream, e_msg);
+          let _ = write_simple_error(&mut ctx.stream, e_msg).await;
           return (DbType::None, DbType::None);
       }
 
@@ -97,7 +95,7 @@ impl Command for SetCommand {
             ctx.db.set(key, value);
             let mut buf = BytesMut::new();
             RespEncoder::encode_simple_string("OK", &mut buf);
-            ctx.stream.write_all(&buf).await;
+            let _ = ctx.stream.write_all(&buf).await;
         }
     }
 }
@@ -114,7 +112,7 @@ impl Command for GetCommand {
         if self.0.is_none() {
             let msg = "Err no key specified";
             ctx.log(msg);
-            write_simple_error(&mut ctx.stream, msg);
+            let _ = write_simple_error(&mut ctx.stream, msg).await;
             return;
         }
 
@@ -123,7 +121,7 @@ impl Command for GetCommand {
         if key.is_none() {
           let msg = "Err key malformed, expected bulk string";
           ctx.log(msg);
-          write_simple_error(&mut ctx.stream, msg);
+          let _ = write_simple_error(&mut ctx.stream, msg).await;
           return;
         }
 
@@ -147,7 +145,7 @@ impl Command for GetCommand {
 
         let mut buf = BytesMut::new();
         RespEncoder::encode_bulk_string(&payload.to_bytes().unwrap(), &mut buf);
-        if let Err(e) = ctx.stream.write_all(&buf).await {
+        if let Err(_) = ctx.stream.write_all(&buf).await {
             ctx.log("EWRITEERR: write to client stream failed...");
         }
     }

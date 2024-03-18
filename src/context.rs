@@ -1,6 +1,4 @@
-use crate::resp::{Resp};
-use std::sync::{Arc, Mutex};
-use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Instant;
 use tokio::net::{TcpStream};
 use std::net::SocketAddr;
