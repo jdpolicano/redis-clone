@@ -130,7 +130,6 @@ impl Command for GetCommand {
         let value = ctx.db.get(&key.unwrap());
 
         if value.is_none() {
-          // ctx.log(&format!("ENOTFOUND: {:?}", key));
           let mut buf = BytesMut::new();
           RespEncoder::encode_bulk_string_null(&mut buf);
           if let Err(e) = ctx.stream.write_all(&buf).await {
