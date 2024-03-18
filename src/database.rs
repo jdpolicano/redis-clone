@@ -34,6 +34,7 @@ impl DbType {
 
 pub struct Database {
     store: Arc<Mutex<HashMap<DbType, DbType>>>,
+    ttl: Arc<Mutex<HashMap<DbType, i64>>>,
 }
 
 
@@ -41,6 +42,7 @@ impl Database {
     pub fn new() -> Self {
         Database {
             store: Arc::new(Mutex::new(HashMap::new())),
+            ttl: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -56,5 +58,10 @@ impl Database {
     pub fn del(&self, key: &DbType) -> bool {
         let mut store = self.store.lock().unwrap();
         store.remove(&key).is_some()
+    }
+
+    pub fn expery(&self, key: &DbType, seconds: i64) {
+        let mut ttl = self.ttl.lock().unwrap();
+        ttl.insert(key.clone(), seconds);
     }
 }

@@ -33,12 +33,10 @@ async fn handle_stream(mut stream: TcpStream, db: Arc<Database>) -> io::Result<(
         let nbytes = stream.read(&mut chunk).await?;
 
         if nbytes == 0 {
-            eprintln!("Connection closed");
             return Ok(());
         }
 
         buffer.extend_from_slice(&chunk[..nbytes]);
-        eprintln!("Received: {}", String::from_utf8_lossy(&buffer[..nbytes]));
 
         let mut parser = RespParser::new(buffer.clone());
 
@@ -68,7 +66,7 @@ async fn handle_command(stream: &mut TcpStream, cmd: Resp, db: Arc<Database>) ->
 }
 
 async fn route_command(stream: &mut TcpStream, mut cmd_args: Vec<Resp>, db: Arc<Database>) -> io::Result<()>  {
-    //reverse the order of the arguments
+    // reverse the order of the arguments
     // now order is [arg3 arg2 arg1 command]
     cmd_args.reverse();
     let last = cmd_args

@@ -1,38 +1,59 @@
-// use std::sync::Arc;
-// use tokio::io::{self, AsyncWriteExt, AsyncReadExt};
-// use tokio::net::TcpStream;
-// use bytes::BytesMut;
-// use redis_starter_rust::database::Database;
-// use redis_starter_rust::resp::{Resp, RespParser, RespEncoder};
+use std::sync::Arc;
+use tokio::io::{self, AsyncWriteExt, AsyncReadExt};
+use tokio::net::TcpStream;
+use bytes::BytesMut;
+use crate::database::Database;
+use crate::resp::{Resp, RespParser, RespEncoder};
+use crate::context::Context;
 
-// // Command trait to represent any executable command
-// pub trait Command {
-//     fn execute(&self, db: Arc<Database>, stream: &mut TcpStream) -> io::Result<()>;
-// }
+// Command trait to represent any executable command.
+// commands must be no
+pub trait Command {
+    async fn execute(&self, ctx: Context);
+}
 
-// // Implement the Command trait for different commands
-// struct PingCommand;
-// struct EchoCommand(Resp);
-// struct SetCommand(Vec<u8>, Resp);
+// Implement the Command trait for different commands
+pub struct PingCommand;
+pub struct EchoCommand(Option<Resp>);
+pub struct SetCommand(Vec<u8>, Resp);
 
-// // returns a resp enum that can be encoded and sent directly to the client if needed. 
-// pub type CommandResult = Result<Resp, String>;
+impl PingCommand {
+    pub fn new() -> Self {
+        PingCommand
+    }
+}
 
-// impl Command for PingCommand {
-//     fn execute(&self, db: Arc<Database>) -> CommandResult {
-//         let mut buf = BytesMut::new();
-//         RespEncoder::encode_simple_string("PONG", &mut buf);
-//         stream.write_all(&buf).await
-//     }
-// }
+impl Command for PingCommand {
+    async fn execute(&self, mut ctx: Context) {
+        let mut buf = BytesMut::new();
+        RespEncoder::encode_simple_string("PONG", &mut buf);
+        let res = ctx.stream.write_all(&buf).await;
+        if let Err(e) = res {
+            ctx.log(&format!("Error writing to stream: {}", e));
+        }
+    }
+}
 
-// impl Command for EchoCommand {
-//     fn execute(&self, db: Arc<Database>, stream: &mut TcpStream) -> CommandResult {
-//         let mut buf = BytesMut::new();
-//         RespEncoder::encode_resp(&self.0, &mut buf);
-//         stream.write_all(&buf).await
-//     }
-// }
+impl EchoCommand {
+    pub fn new(resp: Option<Resp>) -> Self {
+        EchoCommand(resp)
+    }
+}
+
+impl Command for EchoCommand {
+    async fn execute(&self, mut ctx: Context) {
+        let mut buf = BytesMut::new();
+        if let Some(resp) = &self.0 {
+            RespEncoder::encode_resp(resp, &mut buf);
+            let res = ctx.stream.write_all(&buf).await;
+            if let Err(e) = res {
+                ctx.log(&format!("Error writing to stream: {}", e));
+            }
+        } else {
+            ctx.log("No echo value provided");
+        }
+    }
+}
 
 // impl Command for SetCommand {
 //     fn execute(&self, db: Arc<Database>, stream: &mut TcpStream) -> CommandResult {
