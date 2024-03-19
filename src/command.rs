@@ -1,6 +1,6 @@
 use tokio::io::AsyncWriteExt;
 use bytes::BytesMut;
-use crate::database::{ DbType };
+use crate::database::{ Record };
 use crate::resp::{Resp, RespEncoder};
 use crate::server::{ write_simple_error };
 use crate::context::Context;
@@ -62,34 +62,56 @@ impl SetCommand {
     SetCommand(args)
   }
 
-  async fn get_kv(&self, key: Option<Resp>, value: Option<Resp>, ctx: &mut Context) -> (DbType, DbType) {
-      if key.is_none() || value.is_none() {
-          let e_msg = "Err SET requires key and value";
-          ctx.log(e_msg);
-          let _ = write_simple_error(&mut ctx.stream, e_msg).await;
-          return (DbType::None, DbType::None);
-      }
+  async fn get_kv(&mut self, ctx: &mut Context) -> (Record, Record) {
+        let key  = self.0.pop();
+        let value = self.0.pop();
+        if key.is_none() || value.is_none() {
+            let e_msg = "Err SET requires key and value";
+            ctx.log(e_msg);
+            let _ = write_simple_error(&mut ctx.stream, e_msg).await;
+            return (Record::None, Record::None);
+        }
 
-      let k = DbType::from_resp(key.unwrap());
-      let v = DbType::from_resp(value.unwrap());
+        let k = Record::from_resp(key.unwrap());
+        let v = Record::from_resp(value.unwrap());
 
-      if k.is_none() || v.is_none() {
-          let e_msg = "Err SET key/value isn't bulk string";
-          ctx.log(e_msg);
-          let _ = write_simple_error(&mut ctx.stream, e_msg).await;
-          return (DbType::None, DbType::None);
-      }
+        if k.is_none() || v.is_none() {
+            let e_msg = "Err SET key/value isn't bulk string";
+            ctx.log(e_msg);
+            let _ = write_simple_error(&mut ctx.stream, e_msg).await;
+            return (Record::None, Record::None);
+        }
 
-      (k.unwrap(), v.unwrap())
+        (k.unwrap(), v.unwrap())
+  }
+
+  async fn get_args(&mut self, ctx: &mut Context) -> (Record, Record) {
+    let key  = self.0.pop();
+    let value = self.0.pop();
+    if key.is_none() || value.is_none() {
+        let e_msg = "Err SET requires key and value";
+        ctx.log(e_msg);
+        let _ = write_simple_error(&mut ctx.stream, e_msg).await;
+        return (Record::None, Record::None);
+    }
+
+    let k = Record::from_resp(key.unwrap());
+    let v = Record::from_resp(value.unwrap());
+
+    if k.is_none() || v.is_none() {
+        let e_msg = "Err SET key/value isn't bulk string";
+        ctx.log(e_msg);
+        let _ = write_simple_error(&mut ctx.stream, e_msg).await;
+        return (Record::None, Record::None);
+    }
+
+    (k.unwrap(), v.unwrap())
   }
 }
 
 impl Command for SetCommand {
     async fn execute(mut self, ctx: &mut Context) {
-        let k = self.0.pop();
-        let v = self.0.pop();
-
-        let (key, value) = self.get_kv(k, v, ctx).await;
+        let (key, value) = self.get_kv(ctx).await;
         
         if key.is_string() && !value.is_none() {
             ctx.db.set(key, value);
@@ -116,7 +138,7 @@ impl Command for GetCommand {
             return;
         }
 
-        let key = DbType::from_resp(self.0.unwrap());
+        let key = Record::from_resp(self.0.unwrap());
 
         if key.is_none() {
           let msg = "Err key malformed, expected bulk string";
