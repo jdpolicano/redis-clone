@@ -5,6 +5,7 @@ use bytes::BytesMut;
 use std::io::{ self };
 use crate::resp::{ Resp, RespEncoder};
 use crate::database::{ Database };
+use crate::arguments::{ ServerArguments };
 use std::sync::Arc;
 
 pub struct RedisServer {
@@ -13,7 +14,8 @@ pub struct RedisServer {
 }
 
 impl RedisServer {
-    pub async fn new(addr: &str) -> io::Result<Self> {
+    pub async fn new(args: ServerArguments) -> io::Result<Self> {
+        let addr = format!("{}:{}", args.host, args.port);
         let listener = TcpListener::bind(addr).await?;
         let database = Arc::new(Database::new());
         Ok(RedisServer { listener, database })

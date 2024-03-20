@@ -8,11 +8,13 @@ use redis_starter_rust::server::{ RedisServer, write_simple_error, client_resp_t
 use redis_starter_rust::resp::{ RespParser, Resp};
 use redis_starter_rust::context::Context;
 use redis_starter_rust::command::{Command, PingCommand, EchoCommand, SetCommand, GetCommand};
-use redis_starter_rust::arguments::{ EchoArguments, SetArguments, GetArguments };
+use redis_starter_rust::arguments::{ EchoArguments, SetArguments, GetArguments, ServerArguments };
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
-    let server = RedisServer::new("127.0.0.1:6379").await?;
+    let server_args = ServerArguments::parse();
+    let server = RedisServer::new(server_args).await?;
+    
     loop {
         let (stream, addr) = server.listener.accept().await?;
         let db = server.database.clone();

@@ -2,10 +2,10 @@ use crate::resp::Resp;
 use crate::database::Record;
 use std::time::Duration;
 use std::vec::IntoIter;
+use std::env;
 
 
-// arguments for the echo command...
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct EchoArguments {
     pub message: Resp,
 }
@@ -27,7 +27,7 @@ impl EchoArguments {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct GetArguments {
     pub key: Vec<u8>,
 }
@@ -93,7 +93,7 @@ impl SetArguments {
             match arg {
                 Resp::BulkString(bs) => {
                     let as_str = String::from_utf8(bs)
-                        .map_err(|_| "ERR invalid argument")?;
+                        .map_err(|_| "ERR argument not utf8")?;
 
                     match &as_str.to_uppercase()[..] {
                         "NX" => nx = true,
@@ -129,5 +129,39 @@ impl SetArguments {
         }
 
         Ok(SetArguments { key, value, nx, xx, get, expiration })
+    }
+}
+
+pub struct ServerArguments {
+  pub host: String,
+  pub port: u64
+}
+
+impl ServerArguments {
+    pub fn parse() -> ServerArguments {
+        let mut env = env::args();
+        let mut port = 6379;
+
+        env.next(); // skip executable path...
+
+        while let Some(arg) = env.next() {
+            match arg.as_str() {
+                "--port" => {
+                    if let Some(n) = env.next() {
+                        let as_num = n.parse::<u64>();
+                        match as_num {
+                            Ok(p) => port = p,
+                            Err(e) => println!("unable to parse port {}", e),
+                        };
+                    } else {
+                        println!("no port passed, defaulting to {}", port);
+                    }
+                }
+                _ => println!("recevied unsupported arg {}", arg)
+            }
+        }
+        
+        // default to local host for now.
+        Self { host: "127.0.0.1".to_string() , port: 6379 }
     }
 }
