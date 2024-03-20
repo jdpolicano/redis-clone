@@ -14,8 +14,8 @@ impl EchoArguments {
     pub fn parse(mut args: IntoIter<Resp>) -> Result<EchoArguments, String> {
         // Since we check that there is exactly one argument, we can safely pop it
         let message = match args.next() {
-          Some(resp) => resp,
-          _ => return Err("ERR wrong number of arguments for 'echo' command".to_string())
+            Some(resp) => resp,
+            _ => return Err("ERR wrong number of arguments for 'echo' command".to_string())
         };
 
         // Ensure the message is a bulk string; otherwise, return an error

@@ -39,14 +39,14 @@ impl Record {
 
 pub struct Database {
     // (key, value)
-    store: Arc<Mutex<HashMap<Vec<u8>, Record>>>,
+    store: Mutex<HashMap<Vec<u8>, Record>>,
 }
 
 
 impl Database {
     pub fn new() -> Self {
         Database {
-            store: Arc::new(Mutex::new(HashMap::new())),
+            store: Mutex::new(HashMap::new()),
         }
     }
 

@@ -8,18 +8,34 @@ use crate::database::{ Database };
 use crate::arguments::{ ServerArguments };
 use std::sync::Arc;
 
+pub struct ServerInfo {
+    role: String,
+}
+
+impl ServerInfo {
+    pub fn new(args: ServerArguments) -> Self {
+        ServerInfo { role: "master".to_string() }
+    }
+
+    pub fn get_role(&self) -> String {
+        format!("role:{}", self.role)
+    }
+}
+
 pub struct RedisServer {
     pub listener: TcpListener,
     pub database: Arc<Database>,
+    pub info: Arc<ServerInfo>
 }
 
 impl RedisServer {
     pub async fn new(args: ServerArguments) -> io::Result<Self> {
         let addr = format!("{}:{}", args.host, args.port);
+        let info = Arc::new(ServerInfo::new(args));
         println!("Listening on: {}", addr);
         let listener = TcpListener::bind(addr).await?;
         let database = Arc::new(Database::new());
-        Ok(RedisServer { listener, database })
+        Ok(RedisServer { listener, database, info })
     }
 }
 

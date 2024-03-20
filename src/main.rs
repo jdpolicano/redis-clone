@@ -1,11 +1,11 @@
 // Uncomment this block to pass the first stage
 
-use tokio::io::{ AsyncReadExt };
+use tokio::io::{ AsyncReadExt, AsyncWriteExt };
 use bytes::BytesMut;
 use std::io::{ self };
 use std::vec::IntoIter;
 use redis_starter_rust::server::{ RedisServer, write_simple_error, client_resp_to_string };
-use redis_starter_rust::resp::{ RespParser, Resp};
+use redis_starter_rust::resp::{ RespParser, Resp, RespEncoder };
 use redis_starter_rust::context::Context;
 use redis_starter_rust::command::{Command, PingCommand, EchoCommand, SetCommand, GetCommand};
 use redis_starter_rust::arguments::{ EchoArguments, SetArguments, GetArguments, ServerArguments };
@@ -18,8 +18,10 @@ async fn main() -> io::Result<()> {
     loop {
         let (stream, addr) = server.listener.accept().await?;
         let db = server.database.clone();
+        let info = server.info.clone();
+
         tokio::spawn(async move {
-            let ctx = Context::new(db, stream, addr);
+            let ctx = Context::new(db, info, stream, addr);
             let _ = handle_stream(ctx).await;
         });
     }
@@ -85,6 +87,7 @@ async fn handle_command(cmd: Resp, ctx: &mut Context) -> io::Result<()> {
                     "PING" => { return ping(ctx).await },
                     "SET" => { return set(args_iter, ctx).await },
                     "GET" => { return get(args_iter, ctx).await },
+                    "INFO" => { return info(args_iter, ctx).await },
                     _ => { return Err(io::Error::new(io::ErrorKind::InvalidInput, "Unknown command")) }
                 }
             },
@@ -137,5 +140,12 @@ async fn get(args: IntoIter<Resp>, ctx: &mut Context) -> io::Result<()> {
 
     let g = GetCommand::new(parsed_args.unwrap());
     g.execute(ctx).await;
+    Ok(())
+}
+
+async fn info(args: IntoIter<Resp>, ctx: &mut Context) -> io::Result<()> {
+    let mut buf = BytesMut::new();
+    RespEncoder::encode_simple_string(&ctx.info.get_role(), &mut buf);
+    ctx.stream.write_all(&buf).await?;
     Ok(())
 }
