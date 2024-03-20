@@ -148,7 +148,7 @@ async fn info(args: IntoIter<Resp>, ctx: &mut Context) -> io::Result<()> {
     let payload = format!(
         "{}\r\n{}\r\n{}", 
         ctx.info.get_role(),
-        ctx.info.get_master_repl_id(),
+        ctx.info.get_master_replid(),
         ctx.info.get_master_repl_offset()
     );
 

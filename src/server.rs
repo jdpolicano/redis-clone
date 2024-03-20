@@ -11,7 +11,7 @@ use std::sync::Arc;
 pub struct ServerInfo {
     role: String,
     replica_of: Option<(String, u64)>,
-    master_repl_id: String,
+    master_replid: String,
     master_repl_offset: u64,
 }
 
@@ -29,7 +29,7 @@ impl ServerInfo {
         ServerInfo { 
             role, 
             replica_of,
-            master_repl_id: rand_id,
+            master_replid: rand_id,
             master_repl_offset: 0,
         }
     }
@@ -38,8 +38,8 @@ impl ServerInfo {
         format!("role:{}", self.role)
     }
 
-    pub fn get_master_repl_id(&self) -> String {
-        format!("master_repl_id:{}", self.master_repl_id)
+    pub fn get_master_replid(&self) -> String {
+        format!("master_replid:{}", self.master_replid)
     }
 
     pub fn get_master_repl_offset(&self) -> String {
