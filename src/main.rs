@@ -1,11 +1,16 @@
 // Uncomment this block to pass the first stage
-
 use tokio::io::{ AsyncReadExt, AsyncWriteExt};
 use tokio::net::{ TcpStream };
 use bytes::BytesMut;
 use std::io::{ self };
 use std::vec::IntoIter;
-use redis_starter_rust::server::{ RedisServer, write_simple_error, client_resp_to_string };
+use redis_starter_rust::server::{ 
+    RedisServer, 
+    write_simple_error, 
+    client_resp_to_string,
+    read_and_parse,
+    write_bulk_string_array
+ };
 use redis_starter_rust::resp::{ RespParser, Resp, RespEncoder };
 use redis_starter_rust::context::Context;
 use redis_starter_rust::command::{Command, PingCommand, EchoCommand, SetCommand, GetCommand};
@@ -27,51 +32,41 @@ async fn main() -> io::Result<()> {
                 let _ = handle_stream(ctx).await;
             });
         }
-    } else {
-        let _ = negoatiate_replication(server).await?;
-        println!("lets gooooo!!!");
+    } else {     
+        let db = server.database.clone();
+        let info = server.info.clone();
+        let address_str = info.get_master_addr();
+        let remote = TcpStream::connect(address_str).await?;
+        let addr = remote.peer_addr()?;
+        let ctx = Context::new(db, info, remote, addr);
+
+        negotiate_replication(ctx).await?;
     }
     Ok(())
 }
 
 async fn handle_stream(mut ctx: Context) -> io::Result<()>  {
-        let mut buffer = BytesMut::new();
-        let mut success = false;
+    let mut buffer = BytesMut::new();
+    let mut nbytes = 0;
+    
+    loop {
+        let cmd = read_and_parse(&mut ctx.stream, &mut buffer, &mut nbytes).await?;
 
-        loop {
-            let mut chunk = [0; 1024];
-            let nbytes = ctx.stream.read(&mut chunk).await?;
-    
-            if nbytes == 0 {
-                ctx.log("client stream EOF");
-                if !success {
-                  ctx.log("unable to parse client message");
-                }
-                return Ok(());
+        match handle_command(cmd, &mut ctx).await {
+            Ok(_) => {
+                buffer.clear();
+                return Ok(())
             }
-    
-            buffer.extend_from_slice(&chunk[..nbytes]);
-    
-            let mut parser = RespParser::new(buffer.clone());
-    
-            if let Ok(cmd) = parser.parse() {
-                success = true;
-                ctx.log(&format!("Parsed: {:?}", cmd));
-                match handle_command(cmd, &mut ctx).await {
-                    Ok(_) => {
-                        buffer.clear();
-                    }
-                    Err(e) => {
-                        let e_msg = &format!("Error: {}", e);
-                        ctx.log(e_msg);
-                        write_simple_error(&mut ctx.stream, e_msg).await?;
-                        buffer.clear();
-                    }
-                }
-            } else {
-                ctx.log("partial stream, failed to parse");
+            Err(e) => {
+                let e_msg = &format!("Error: {}", e);
+                ctx.log(e_msg);
+                write_simple_error(&mut ctx.stream, e_msg).await?;
+                buffer.clear();
+                return Err(e);
             }
         }
+    }
+       
 }
 
 async fn handle_command(cmd: Resp, ctx: &mut Context) -> io::Result<()> {
@@ -103,40 +98,15 @@ async fn handle_command(cmd: Resp, ctx: &mut Context) -> io::Result<()> {
           }
 }
 
-async fn negotiate_replication(server: RedisServer) -> io::Result<()> {
-    let mut buffer = BytesMut::new();
-    let mut success = false;
-    let mut remote_connection = TcpStream::connect(server.info.get_master_addr()).await?;
-    let mut payload = Vec::new();
+async fn negotiate_replication(mut ctx: Context) -> io::Result<()> {
+    let pong = send_ping(&mut ctx).await?;
+    Ok(())
+}
 
-    payload.push(Resp::BulkString("PING".as_bytes().to_vec()));
-    RespEncoder::encode_array(&payload, &mut buffer);
-    remote_connection.write_all(&buffer).await?;
-    buffer.clear();
-
-    loop {
-        let mut chunk = [0; 1024];
-        let nbytes = remote_connection.read(&mut chunk).await?;
-
-        if nbytes == 0 {
-            return Err(io::Error::new(io::ErrorKind::ConnectionRefused, "ERR connection refused"));
-        }
-
-        buffer.extend_from_slice(&chunk[..nbytes]);
-        let mut parser = RespParser::new(buffer.clone());
-
-        if let Ok(cmd) = parser.parse() {
-            success = true;
-            match cmd {
-                Resp::SimpleString(s) => {
-                    println!("{s}");
-                },
-                _ => {
-                    return Err(io::Error::new(io::ErrorKind::InvalidInput, "ERR invalid response from master"));
-                }
-            }
-        }
-    }
+async fn send_ping(ctx: &mut Context) -> io::Result<()> {
+    let payload = &[Resp::BulkString("PING".as_bytes().to_vec())];
+    write_bulk_string_array(&mut ctx.stream, payload).await?;
+    Ok(())
 }
 
 // args is still encoded as Resp at this point in time...

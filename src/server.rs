@@ -1,9 +1,9 @@
 // Uncomment this block to pass the first stage
 use tokio::net::{ TcpListener, TcpStream };
-use tokio::io::{ AsyncWriteExt };
+use tokio::io::{ AsyncWriteExt, AsyncReadExt };
 use bytes::BytesMut;
 use std::io::{ self };
-use crate::resp::{ Resp, RespEncoder};
+use crate::resp::{ Resp, RespParser, RespEncoder};
 use crate::database::{ Database };
 use crate::arguments::{ ServerArguments };
 use std::sync::Arc;
@@ -116,5 +116,32 @@ pub async fn write_nil_bulk_string(stream: &mut TcpStream) -> io::Result<()> {
     RespEncoder::encode_bulk_string_null(&mut buf);
     stream.write_all(&buf).await?;
     Ok(())
+}
+
+pub async fn write_bulk_string_array(stream: &mut TcpStream, msgs: &[Resp]) -> io::Result<()> {
+    let mut buf = BytesMut::new();
+    RespEncoder::encode_array(msgs, &mut buf);
+    stream.write_all(&buf).await?;
+    Ok(())
+}
+
+pub async fn read_and_parse(stream: &mut TcpStream, buf: &mut BytesMut, nbytes: &mut usize) -> io::Result<Resp> {
+    loop {
+        let mut chunk = [0; 1024];
+
+        *nbytes = stream.read(&mut chunk).await?;
+
+        if *nbytes == 0 {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "unable to parse client stream."))
+        }
+
+        buf.extend_from_slice(&chunk[..*nbytes]);
+
+        let mut parser = RespParser::new(buf.clone());
+
+        if let Ok(cmd) = parser.parse() {
+           return Ok(cmd)
+        }
+    }
 }
     
