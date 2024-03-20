@@ -145,7 +145,14 @@ async fn get(args: IntoIter<Resp>, ctx: &mut Context) -> io::Result<()> {
 
 async fn info(args: IntoIter<Resp>, ctx: &mut Context) -> io::Result<()> {
     let mut buf = BytesMut::new();
-    RespEncoder::encode_simple_string(&ctx.info.get_role(), &mut buf);
+    let payload = format!(
+        "{}\r\n{}\r\n{}", 
+        ctx.info.get_role(),
+        ctx.info.get_master_repl_id(),
+        ctx.info.get_master_repl_offset()
+    );
+
+    RespEncoder::encode_bulk_string(&payload.as_bytes(), &mut buf);
     ctx.stream.write_all(&buf).await?;
     Ok(())
 }

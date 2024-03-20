@@ -11,6 +11,8 @@ use std::sync::Arc;
 pub struct ServerInfo {
     role: String,
     replica_of: Option<(String, u64)>,
+    master_repl_id: String,
+    master_repl_offset: u64,
 }
 
 impl ServerInfo {
@@ -20,13 +22,31 @@ impl ServerInfo {
             None => "master".to_string(),
         };
 
-        ServerInfo { role, replica_of: args.replica_of }
+        let replica_of = args.replica_of;
+        // this should use a num generatore in the future...
+        let rand_id = "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string();
+
+        ServerInfo { 
+            role, 
+            replica_of,
+            master_repl_id: rand_id,
+            master_repl_offset: 0,
+        }
     }
 
     pub fn get_role(&self) -> String {
         format!("role:{}", self.role)
     }
+
+    pub fn get_master_repl_id(&self) -> String {
+        format!("master_repl_id:{}", self.master_repl_id)
+    }
+
+    pub fn get_master_repl_offset(&self) -> String {
+        format!("master_repl_offset:{}", self.master_repl_offset)
+    }
 }
+
 
 pub struct RedisServer {
     pub listener: TcpListener,
