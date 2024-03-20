@@ -25,7 +25,7 @@ impl Record {
 
     pub fn has_expired(&self) -> bool {
         if let Some((start, duration)) = self.expiry {
-            start.elapsed() > duration
+            start.elapsed() >= duration
         } else {
             false
         }
