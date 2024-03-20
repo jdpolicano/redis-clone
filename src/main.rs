@@ -1,5 +1,5 @@
 // Uncomment this block to pass the first stage
-use tokio::io::{ AsyncReadExt, AsyncWriteExt};
+use tokio::io::{ AsyncWriteExt};
 use tokio::net::{ TcpStream };
 use bytes::BytesMut;
 use std::io::{ self };
@@ -11,7 +11,7 @@ use redis_starter_rust::server::{
     read_and_parse,
     write_bulk_string_array
  };
-use redis_starter_rust::resp::{ RespParser, Resp, RespEncoder };
+use redis_starter_rust::resp::{ Resp, RespEncoder };
 use redis_starter_rust::context::Context;
 use redis_starter_rust::command::{Command, PingCommand, EchoCommand, SetCommand, GetCommand};
 use redis_starter_rust::arguments::{ EchoArguments, SetArguments, GetArguments, ServerArguments };
@@ -21,18 +21,7 @@ async fn main() -> io::Result<()> {
     let server_args = ServerArguments::parse();
     let server = RedisServer::new(server_args).await?;
 
-    if server.info.get_role() == "master" {
-        loop {
-            let (stream, addr) = server.listener.accept().await?;
-            let db = server.database.clone();
-            let info = server.info.clone();
-    
-            tokio::spawn(async move {
-                let ctx = Context::new(db, info, stream, addr);
-                let _ = handle_stream(ctx).await;
-            });
-        }
-    } else {     
+    if server.info.get_role() != "master" {
         let db = server.database.clone();
         let info = server.info.clone();
         let address_str = info.get_master_addr();
@@ -40,9 +29,21 @@ async fn main() -> io::Result<()> {
         let addr = remote.peer_addr()?;
         let ctx = Context::new(db, info, remote, addr);
 
-        negotiate_replication(ctx).await?;
+        tokio::spawn(async move {
+            let _ = negotiate_replication(ctx).await;
+        });
     }
-    Ok(())
+
+    loop {
+        let (stream, addr) = server.listener.accept().await?;
+        let db = server.database.clone();
+        let info = server.info.clone();
+
+        tokio::spawn(async move {
+            let ctx = Context::new(db, info, stream, addr);
+            let _ = handle_stream(ctx).await;
+        });
+    }
 }
 
 async fn handle_stream(mut ctx: Context) -> io::Result<()>  {
@@ -55,14 +56,12 @@ async fn handle_stream(mut ctx: Context) -> io::Result<()>  {
         match handle_command(cmd, &mut ctx).await {
             Ok(_) => {
                 buffer.clear();
-                return Ok(())
             }
             Err(e) => {
                 let e_msg = &format!("Error: {}", e);
                 ctx.log(e_msg);
                 write_simple_error(&mut ctx.stream, e_msg).await?;
                 buffer.clear();
-                return Err(e);
             }
         }
     }
@@ -99,7 +98,7 @@ async fn handle_command(cmd: Resp, ctx: &mut Context) -> io::Result<()> {
 }
 
 async fn negotiate_replication(mut ctx: Context) -> io::Result<()> {
-    let pong = send_ping(&mut ctx).await?;
+    let _pong = send_ping(&mut ctx).await?;
     Ok(())
 }
 
@@ -159,7 +158,7 @@ async fn get(args: IntoIter<Resp>, ctx: &mut Context) -> io::Result<()> {
 async fn info(_args: IntoIter<Resp>, ctx: &mut Context) -> io::Result<()> {
     let mut buf = BytesMut::new();
     let payload = format!(
-        "{}\r\n{}\r\n{}", 
+        "role:{}\r\nmaster_replid:{}\r\nmaster_repl_offset:{}", 
         ctx.info.get_role(),
         ctx.info.get_master_replid(),
         ctx.info.get_master_repl_offset()
