@@ -168,6 +168,7 @@ impl Command for GetCommand {
           if let Err(e) = ctx.stream.write_all(&buf).await {
             ctx.log(&format!("Write to stream failed {}", e));
           }
+          return;
         }
 
         let mut buf = BytesMut::new();
