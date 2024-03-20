@@ -10,11 +10,17 @@ use std::sync::Arc;
 
 pub struct ServerInfo {
     role: String,
+    replica_of: Option<(String, u64)>,
 }
 
 impl ServerInfo {
     pub fn new(args: ServerArguments) -> Self {
-        ServerInfo { role: "master".to_string() }
+        let role = match args.replica_of {
+            Some((ref host, port)) => "slave".to_string(),
+            None => "master".to_string(),
+        };
+
+        ServerInfo { role, replica_of: args.replica_of }
     }
 
     pub fn get_role(&self) -> String {
@@ -31,10 +37,10 @@ pub struct RedisServer {
 impl RedisServer {
     pub async fn new(args: ServerArguments) -> io::Result<Self> {
         let addr = format!("{}:{}", args.host, args.port);
-        let info = Arc::new(ServerInfo::new(args));
         println!("Listening on: {}", addr);
         let listener = TcpListener::bind(addr).await?;
         let database = Arc::new(Database::new());
+        let info = Arc::new(ServerInfo::new(args));
         Ok(RedisServer { listener, database, info })
     }
 }

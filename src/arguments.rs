@@ -134,13 +134,15 @@ impl SetArguments {
 
 pub struct ServerArguments {
   pub host: String,
-  pub port: u64
+  pub port: u64,
+  pub replica_of: Option<(String, u64)>,
 }
 
 impl ServerArguments {
     pub fn parse() -> ServerArguments {
         let mut env = env::args();
         let mut port = 6379;
+        let mut replica_of = None;
 
         env.next(); // skip executable path...
 
@@ -156,12 +158,27 @@ impl ServerArguments {
                     } else {
                         println!("no port passed, defaulting to {}", port);
                     }
+                },
+
+                "--replicaof" => {
+                    if let Some(repl_host) = env.next() {
+                        if let Some(repl_port) = env.next() {
+                            let as_num = repl_port.parse::<u64>();
+                            match as_num {
+                                Ok(p) => replica_of = Some((repl_host, p)),
+                                Err(e) => println!("unable to parse port {}", e),
+                            };
+                        } else {
+                            println!("no port passed, defaulting to {}", port);
+                            replica_of = Some((repl_host, port));
+                        }
+                    }
                 }
                 _ => println!("recevied unsupported arg {}", arg)
             }
         }
         
         // default to local host for now.
-        Self { host: "127.0.0.1".to_string(), port }
+        Self { host: "127.0.0.1".to_string(), port, replica_of }
     }
 }
