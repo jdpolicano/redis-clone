@@ -3,6 +3,7 @@
 use tokio::io::{ AsyncReadExt };
 use bytes::BytesMut;
 use std::io::{ self };
+use std::vec::IntoIter;
 use redis_starter_rust::server::{ RedisServer, write_simple_error, client_resp_to_string };
 use redis_starter_rust::resp::{ RespParser, Resp};
 use redis_starter_rust::context::Context;
@@ -50,7 +51,6 @@ async fn handle_stream(mut ctx: Context) -> io::Result<()>  {
                         buffer.clear();
                     }
                     Err(e) => {
-                        println!("{:?}", e);
                         let e_msg = &format!("Error: {}", e);
                         ctx.log(e_msg);
                         write_simple_error(&mut ctx.stream, e_msg).await?;
@@ -65,7 +65,7 @@ async fn handle_stream(mut ctx: Context) -> io::Result<()>  {
 
 async fn handle_command(cmd: Resp, ctx: &mut Context) -> io::Result<()> {
         match cmd {
-            Resp::Array(mut a) => {
+            Resp::Array(a) => {
                 if a.len() == 0 {
                     let msg = "ERR empty command";
                     ctx.log(msg);
@@ -73,16 +73,16 @@ async fn handle_command(cmd: Resp, ctx: &mut Context) -> io::Result<()> {
                 }
 
                 // reverse the arguments so we can pop them out in the correct order..
-                a.reverse();
+                let mut args_iter = a.into_iter();
 
                 // this is okay because we confired array isn't empty already.
-                let cmd_name = client_resp_to_string(a.pop().unwrap())?;
+                let cmd_name = client_resp_to_string(args_iter.next().unwrap())?;
 
                 match cmd_name.to_uppercase().as_str() {
-                    "ECHO" => { return echo(a, ctx).await },
+                    "ECHO" => { return echo(args_iter, ctx).await },
                     "PING" => { return ping(ctx).await },
-                    "SET" => { return set(a, ctx).await },
-                    "GET" => { return get(a, ctx).await },
+                    "SET" => { return set(args_iter, ctx).await },
+                    "GET" => { return get(args_iter, ctx).await },
                     _ => { return Err(io::Error::new(io::ErrorKind::InvalidInput, "Unknown command")) }
                 }
             },
@@ -92,7 +92,7 @@ async fn handle_command(cmd: Resp, ctx: &mut Context) -> io::Result<()> {
 }
 
 // args is still encoded as Resp at this point in time...
-async fn echo(args: Vec<Resp>, ctx: &mut Context) -> io::Result<()> {
+async fn echo(args: IntoIter<Resp>, ctx: &mut Context) -> io::Result<()> {
     let parsed_args = EchoArguments::parse(args);
 
     // check if the arguments are valid, and return an io error otherwise...
@@ -112,7 +112,7 @@ async fn ping(ctx: &mut Context) -> io::Result<()> {
 }
 
 
-async fn set(args: Vec<Resp>, ctx: &mut Context) -> io::Result<()> {
+async fn set(args: IntoIter<Resp>, ctx: &mut Context) -> io::Result<()> {
     let parsed_args = SetArguments::parse(args);
 
     // check if the arguments are valid, and return an io error otherwise...
@@ -125,7 +125,7 @@ async fn set(args: Vec<Resp>, ctx: &mut Context) -> io::Result<()> {
     Ok(())
 }
 
-async fn get(args: Vec<Resp>, ctx: &mut Context) -> io::Result<()> {
+async fn get(args: IntoIter<Resp>, ctx: &mut Context) -> io::Result<()> {
     let parsed_args = GetArguments::parse(args);
 
     // check if the arguments are valid, and return an io error otherwise...

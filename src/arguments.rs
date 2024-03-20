@@ -1,6 +1,7 @@
 use crate::resp::Resp;
 use crate::database::Record;
 use std::time::Duration;
+use std::vec::IntoIter;
 
 
 // arguments for the echo command...
@@ -10,13 +11,12 @@ pub struct EchoArguments {
 }
 
 impl EchoArguments {
-    pub fn parse(mut args: Vec<Resp>) -> Result<EchoArguments, String> {
-        if args.len() != 1 {
-            return Err("ERR wrong number of arguments for 'echo' command".to_string());
-        }
-
+    pub fn parse(mut args: IntoIter<Resp>) -> Result<EchoArguments, String> {
         // Since we check that there is exactly one argument, we can safely pop it
-        let message = args.pop().unwrap();
+        let message = match args.next() {
+          Some(resp) => resp,
+          _ => return Err("ERR wrong number of arguments for 'echo' command".to_string())
+        };
 
         // Ensure the message is a bulk string; otherwise, return an error
         if let Resp::BulkString(_) = message {
@@ -33,14 +33,10 @@ pub struct GetArguments {
 }
 
 impl GetArguments {
-    pub fn parse(mut args: Vec<Resp>) -> Result<GetArguments, String> {
-        if args.len() != 1 {
-            return Err("ERR wrong number of arguments for 'get' command".to_string());
-        }
-
+    pub fn parse(mut args: IntoIter<Resp>) -> Result<GetArguments, String> {
         // Since we check that there is exactly one argument, we can safely pop it
-        let key = match args.pop().unwrap() {
-            Resp::BulkString(b) => b,
+        let key = match args.next() {
+            Some(Resp::BulkString(b)) => b,
             _ => return Err("ERR argument must be a bulk string".to_string()),
         };
 
@@ -75,18 +71,17 @@ impl Expiration {
 }
 
 impl SetArguments {
-    pub fn parse(mut args: Vec<Resp>) -> Result<SetArguments, String> {
-        if args.len() < 2 {
-            return Err("ERR wrong number of arguments for 'set' command".to_string());
-        }
+    pub fn parse(mut args: IntoIter<Resp>) -> Result<SetArguments, String> {
  
-        let key = match args.pop().unwrap() {
-            Resp::BulkString(b) => b,
+        let key = match args.next() {
+            Some(Resp::BulkString(b)) => b,
             _ => return Err("ERR key must be a bulk string".to_string()),
         };
 
-        let value = Record::from_resp(args.pop().unwrap())
-            .ok_or("ERR value must be a bulk string")?;
+        let value = match args.next() { 
+          Some(Resp::BulkString(data)) => Record::from_vec(data),
+          _ => return Err("ERR key must be a bulk string".to_string())
+        };
 
         let mut nx = false;
         let mut xx = false;
@@ -94,7 +89,7 @@ impl SetArguments {
         let mut expiration = None;
 
 
-        while let Some(arg) = args.pop() {
+        while let Some(arg) = args.next() {
             match arg {
                 Resp::BulkString(bs) => {
                     let as_str = String::from_utf8(bs)
@@ -105,8 +100,8 @@ impl SetArguments {
                         "XX" => xx = true,
                         "GET" => get = true,
                         "EX" => {
-                            if let Some(Resp::BulkString(next_arg)) = args.pop() {
-                                let seconds = String::from_utf8(next_arg.clone())
+                            if let Some(Resp::BulkString(next_arg)) = args.next() {
+                                let seconds = String::from_utf8(next_arg)
                                     .map_err(|_| "ERR invalid seconds format")?
                                     .parse::<u64>()
                                     .map_err(|_| "ERR invalid seconds value")?;
@@ -116,8 +111,8 @@ impl SetArguments {
                             }
                         },
                         "PX" => { 
-                            if let Some(Resp::BulkString(next_arg)) = args.pop() {
-                                let milliseconds = String::from_utf8(next_arg.clone())
+                            if let Some(Resp::BulkString(next_arg)) = args.next() {
+                                let milliseconds = String::from_utf8(next_arg)
                                     .map_err(|_| "ERR invalid milliseconds format")?
                                     .parse::<u64>()
                                     .map_err(|_| "ERR invalid milliseconds value")?;

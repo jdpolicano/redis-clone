@@ -6,6 +6,7 @@ use std::io::{ self };
 use crate::resp::{ Resp, RespEncoder};
 use crate::database::{ Database };
 use std::sync::Arc;
+
 pub struct RedisServer {
     pub listener: TcpListener,
     pub database: Arc<Database>,

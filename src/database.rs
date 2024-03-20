@@ -19,6 +19,10 @@ impl Record {
         }
     }
 
+    pub fn from_vec(v: Vec<u8>) -> Record {
+        Record { data: v, expiry: None }
+    }
+
     pub fn set_expiry(&mut self, duration: Duration) {
         self.expiry = Some((Instant::now(), duration));
     }
