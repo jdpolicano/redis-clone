@@ -4,14 +4,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Instant, Duration};
 
 #[derive(Eq, Hash, PartialEq, Clone, Debug)]
-pub enum Record {
-    String(Vec<u8>),
-    List,
-    Set,
-    Hash,
-    ZSet,
-    Stream,
-    None,
+pub struct Record {
+    pub data: Vec<u8>,
+    expiry: Option<(Instant, Duration)>,
 }
 
 impl Record {
@@ -19,29 +14,20 @@ impl Record {
     // client always sends a bulk string, so we can safely assume that
     pub fn from_resp(resp: Resp) -> Option<Record> {
         match resp {
-            Resp::BulkString(b) => Some(Record::String(b)),
+            Resp::BulkString(b) => Some(Record { data: b, expiry: None }),
             _ => None,
         }
     }
 
-    pub fn to_bytes(&self) -> Option<Vec<u8>> {
-        match self {
-            Record::String(b) => Some(b.clone()),
-            _ => None,
-        }
+    pub fn set_expiry(&mut self, duration: Duration) {
+        self.expiry = Some((Instant::now(), duration));
     }
 
-    pub fn is_string(&self) -> bool {
-        match self {
-            Record::String(_) => true,
-            _ => false,
-        }
-    }
-
-    pub fn is_none(&self) -> bool {
-        match self {
-            Record::None => true,
-            _ => false,
+    pub fn has_expired(&self) -> bool {
+        if let Some((start, duration)) = self.expiry {
+            start.elapsed() > duration
+        } else {
+            false
         }
     }
 }
@@ -49,9 +35,7 @@ impl Record {
 
 pub struct Database {
     // (key, value)
-    store: Arc<Mutex<HashMap<Record, Record>>>,
-    // (key, creation time, expiry)
-    ttl: Arc<Mutex<HashMap<Record, (Instant, Duration)>>>,
+    store: Arc<Mutex<HashMap<Vec<u8>, Record>>>,
 }
 
 
@@ -59,49 +43,26 @@ impl Database {
     pub fn new() -> Self {
         Database {
             store: Arc::new(Mutex::new(HashMap::new())),
-            ttl: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
-    pub fn set(&self, key: Record, value: Record) -> Option<Record> {
-        let mut store = self.lock().0;
+    pub fn set(&self, key: Vec<u8>, value: Record) -> Option<Record> {
+        let mut store = self.store.lock().unwrap();
         store.insert(key, value)
     }
 
-    pub fn get(&self, key: &Record) -> Option<Record> {
-        // check if the key has an expiry...
-        let (mut store, mut ttl) = self.lock();
-
-        if let Some((created, expiry)) = ttl.get(key) {
-            if created.elapsed() > *expiry {
-                store.remove(&key);
-                ttl.remove(&key);
-                return None;
-            }
-            return store.get(key).cloned()
-        }
-
+    pub fn get(&self, key: &[u8]) -> Option<Record> {
+        let store = self.store.lock().unwrap();
         store.get(key).cloned()
     }
 
-    pub fn del(&self, key: &Record) -> bool {
-        let (mut store, mut ttl) = self.lock();
-        ttl.remove(&key);
-        store.remove(&key).is_some()
+    pub fn exists(&self, key: &[u8]) -> bool {
+        let store = self.store.lock().unwrap();
+        store.contains_key(key)
     }
 
-    pub fn expiry(&self, key: &Record, d: Duration) {
-        let mut ttl = self.lock().1;
-        ttl.insert(key.clone(), (Instant::now(), d));
-    }
-
-    // this was a bad choice, but to avoid a deadlock
-    // each call should aquire both store and ttl locks
-    // otherwise there may be two threads competing for the locks
-    fn lock(&self) -> (
-        std::sync::MutexGuard<HashMap<Record, Record>>, 
-        std::sync::MutexGuard<HashMap<Record, (Instant, Duration)>>
-    ) {
-        (self.store.lock().unwrap(), self.ttl.lock().unwrap())
+    pub fn del(&self, key: &[u8]) -> bool {
+        let mut store = self.store.lock().unwrap();
+        store.remove(key).is_some()
     }
 }

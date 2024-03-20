@@ -7,6 +7,7 @@ use redis_starter_rust::server::{ RedisServer, write_simple_error, client_resp_t
 use redis_starter_rust::resp::{ RespParser, Resp};
 use redis_starter_rust::context::Context;
 use redis_starter_rust::command::{Command, PingCommand, EchoCommand, SetCommand, GetCommand};
+use redis_starter_rust::arguments::{ EchoArguments, SetArguments, GetArguments };
 
 
 
@@ -94,9 +95,16 @@ async fn handle_command(cmd: Resp, ctx: &mut Context) -> io::Result<()> {
 
 // args is still encoded as Resp at this point in time...
 async fn echo(mut args: Vec<Resp>, ctx: &mut Context) -> io::Result<()> {
-  let e = EchoCommand::new(args.pop());
-  e.execute(ctx).await;
-  Ok(())
+    let parsed_args = EchoArguments::parse(args);
+
+    // check if the arguments are valid, and return an io error otherwise...
+    if let Err(e) = parsed_args {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, e));
+    }
+
+    let e = EchoCommand::new(parsed_args.unwrap());
+    e.execute(ctx).await;
+    Ok(())
 }
 
 async fn ping(ctx: &mut Context) -> io::Result<()> {
@@ -107,13 +115,27 @@ async fn ping(ctx: &mut Context) -> io::Result<()> {
 
 
 async fn set(args: Vec<Resp>, ctx: &mut Context) -> io::Result<()> {
-  let s = SetCommand::new(args);
-  s.execute(ctx).await;
-  Ok(())
+    let parsed_args = SetArguments::parse(args);
+
+    // check if the arguments are valid, and return an io error otherwise...
+    if let Err(e) = parsed_args {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, e));
+    }
+    
+    let s = SetCommand::new(parsed_args.unwrap());
+    s.execute(ctx).await;
+    Ok(())
 }
 
 async fn get(mut args: Vec<Resp>, ctx: &mut Context) -> io::Result<()> {
-  let g = GetCommand::new(args.pop());
-  g.execute(ctx).await;
-  Ok(())
+    let parsed_args = GetArguments::parse(args);
+
+    // check if the arguments are valid, and return an io error otherwise...
+    if let Err(e) = parsed_args {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, e));
+    }
+
+    let g = GetCommand::new(parsed_args.unwrap());
+    g.execute(ctx).await;
+    Ok(())
 }

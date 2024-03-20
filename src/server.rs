@@ -37,4 +37,24 @@ pub async fn write_simple_error(stream: &mut TcpStream, msg: &str) -> io::Result
     Ok(())
 }
 
+pub async fn write_nil(stream: &mut TcpStream) -> io::Result<()> {
+    let mut buf = BytesMut::new();
+    RespEncoder::encode_array_null(&mut buf);
+    stream.write_all(&buf).await?;
+    Ok(())
+}
+
+pub async fn write_simple_string(stream: &mut TcpStream, msg: &str) -> io::Result<()> {
+    let mut buf = BytesMut::new();
+    RespEncoder::encode_simple_string(msg, &mut buf);
+    stream.write_all(&buf).await?;
+    Ok(())
+}
+
+pub async fn write_nil_bulk_string(stream: &mut TcpStream) -> io::Result<()> {
+    let mut buf = BytesMut::new();
+    RespEncoder::encode_bulk_string_null(&mut buf);
+    stream.write_all(&buf).await?;
+    Ok(())
+}
     
