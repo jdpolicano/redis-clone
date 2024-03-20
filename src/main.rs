@@ -9,8 +9,6 @@ use redis_starter_rust::context::Context;
 use redis_starter_rust::command::{Command, PingCommand, EchoCommand, SetCommand, GetCommand};
 use redis_starter_rust::arguments::{ EchoArguments, SetArguments, GetArguments };
 
-
-
 #[tokio::main]
 async fn main() -> io::Result<()> {
     let server = RedisServer::new("127.0.0.1:6379").await?;
