@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use crate::resp::{Resp};
-use std::sync::{Arc, Mutex};
+use std::sync::{Mutex};
 use std::time::{Instant, Duration};
 
 #[derive(Eq, Hash, PartialEq, Clone, Debug)]

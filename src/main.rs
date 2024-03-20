@@ -143,7 +143,7 @@ async fn get(args: IntoIter<Resp>, ctx: &mut Context) -> io::Result<()> {
     Ok(())
 }
 
-async fn info(args: IntoIter<Resp>, ctx: &mut Context) -> io::Result<()> {
+async fn info(_args: IntoIter<Resp>, ctx: &mut Context) -> io::Result<()> {
     let mut buf = BytesMut::new();
     let payload = format!(
         "{}\r\n{}\r\n{}", 

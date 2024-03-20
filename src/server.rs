@@ -18,7 +18,7 @@ pub struct ServerInfo {
 impl ServerInfo {
     pub fn new(args: ServerArguments) -> Self {
         let role = match args.replica_of {
-            Some((ref host, port)) => "slave".to_string(),
+            Some(_) => "slave".to_string(),
             None => "master".to_string(),
         };
 
@@ -44,6 +44,13 @@ impl ServerInfo {
 
     pub fn get_master_repl_offset(&self) -> String {
         format!("master_repl_offset:{}", self.master_repl_offset)
+    }
+
+    pub fn get_replica_of(&self) -> String {
+        match &self.replica_of {
+            Some((host, port)) => format!("replica_of:{}:{}", host, port),
+            None => "replica_of:None".to_string(),
+        }
     }
 }
 
