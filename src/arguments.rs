@@ -2,6 +2,7 @@ use crate::resp::Resp;
 use crate::database::Record;
 use std::time::Duration;
 
+
 // arguments for the echo command...
 #[derive(Debug, Clone)]
 pub struct EchoArguments {
@@ -96,11 +97,14 @@ impl SetArguments {
         while let Some(arg) = args.pop() {
             match arg {
                 Resp::BulkString(bs) => {
-                    match bs.as_slice() {
-                        b"NX" => nx = true,
-                        b"XX" => xx = true,
-                        b"GET" => get = true,
-                        b"EX" => {
+                    let as_str = String::from_utf8(bs)
+                        .map_err(|_| "ERR invalid argument")?;
+
+                    match &as_str.to_uppercase()[..] {
+                        "NX" => nx = true,
+                        "XX" => xx = true,
+                        "GET" => get = true,
+                        "EX" => {
                             if let Some(Resp::BulkString(next_arg)) = args.pop() {
                                 let seconds = String::from_utf8(next_arg.clone())
                                     .map_err(|_| "ERR invalid seconds format")?
@@ -111,7 +115,7 @@ impl SetArguments {
                                 return Err("ERR expected seconds after 'EX'".to_string());
                             }
                         },
-                        b"PX" => { 
+                        "PX" => { 
                             if let Some(Resp::BulkString(next_arg)) = args.pop() {
                                 let milliseconds = String::from_utf8(next_arg.clone())
                                     .map_err(|_| "ERR invalid milliseconds format")?

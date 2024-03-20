@@ -1,7 +1,6 @@
 use tokio::io::AsyncWriteExt;
 use bytes::BytesMut;
-use crate::database::{ Record };
-use crate::resp::{Resp, RespEncoder};
+use crate::resp::{RespEncoder};
 use crate::server::{ write_simple_error, write_nil, write_nil_bulk_string, write_simple_string };
 use crate::context::Context;
 use crate::arguments::{ SetArguments, EchoArguments, GetArguments };
@@ -59,13 +58,13 @@ impl SetCommand {
 }
 
 impl Command for SetCommand {
-    async fn execute(mut self, ctx: &mut Context) {
+    async fn execute(self, ctx: &mut Context) {
         let args = self.0;
         let key = args.key;
         let mut value = args.value;
         let expiration = args.expiration;
 
-        if let Some(mut expiration) = expiration {
+        if let Some(expiration) = expiration {
             value.set_expiry(expiration.as_duration());
         }
     

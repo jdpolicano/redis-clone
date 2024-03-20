@@ -94,7 +94,7 @@ async fn handle_command(cmd: Resp, ctx: &mut Context) -> io::Result<()> {
 }
 
 // args is still encoded as Resp at this point in time...
-async fn echo(mut args: Vec<Resp>, ctx: &mut Context) -> io::Result<()> {
+async fn echo(args: Vec<Resp>, ctx: &mut Context) -> io::Result<()> {
     let parsed_args = EchoArguments::parse(args);
 
     // check if the arguments are valid, and return an io error otherwise...
@@ -127,7 +127,7 @@ async fn set(args: Vec<Resp>, ctx: &mut Context) -> io::Result<()> {
     Ok(())
 }
 
-async fn get(mut args: Vec<Resp>, ctx: &mut Context) -> io::Result<()> {
+async fn get(args: Vec<Resp>, ctx: &mut Context) -> io::Result<()> {
     let parsed_args = GetArguments::parse(args);
 
     // check if the arguments are valid, and return an io error otherwise...
