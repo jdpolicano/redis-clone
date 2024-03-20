@@ -35,21 +35,28 @@ impl ServerInfo {
     }
 
     pub fn get_role(&self) -> String {
-        format!("role:{}", self.role)
+        self.role.clone()
     }
 
     pub fn get_master_replid(&self) -> String {
-        format!("master_replid:{}", self.master_replid)
+        self.master_replid.clone()
     }
 
-    pub fn get_master_repl_offset(&self) -> String {
-        format!("master_repl_offset:{}", self.master_repl_offset)
+    pub fn get_master_repl_offset(&self) -> u64 {
+        self.master_repl_offset.clone()
     }
 
-    pub fn get_replica_of(&self) -> String {
+    pub fn get_replica_of(&self) -> (String, u64) {
         match &self.replica_of {
-            Some((host, port)) => format!("replica_of:{}:{}", host, port),
-            None => "replica_of:None".to_string(),
+            Some((host, port)) => (host.clone(), *port),
+            None => ("".to_string(), 0),
+        }
+    }
+
+    pub fn get_master_addr(&self) -> String {
+        match &self.replica_of {
+            Some((host, port)) => format!("{}:{}", host, port),
+            None => "".to_string(),
         }
     }
 }

@@ -1,6 +1,7 @@
 // Uncomment this block to pass the first stage
 
-use tokio::io::{ AsyncReadExt, AsyncWriteExt };
+use tokio::io::{ AsyncReadExt, AsyncWriteExt};
+use tokio::net::{ TcpStream };
 use bytes::BytesMut;
 use std::io::{ self };
 use std::vec::IntoIter;
@@ -14,17 +15,23 @@ use redis_starter_rust::arguments::{ EchoArguments, SetArguments, GetArguments, 
 async fn main() -> io::Result<()> {
     let server_args = ServerArguments::parse();
     let server = RedisServer::new(server_args).await?;
-    
-    loop {
-        let (stream, addr) = server.listener.accept().await?;
-        let db = server.database.clone();
-        let info = server.info.clone();
 
-        tokio::spawn(async move {
-            let ctx = Context::new(db, info, stream, addr);
-            let _ = handle_stream(ctx).await;
-        });
+    if server.info.get_role() == "master" {
+        loop {
+            let (stream, addr) = server.listener.accept().await?;
+            let db = server.database.clone();
+            let info = server.info.clone();
+    
+            tokio::spawn(async move {
+                let ctx = Context::new(db, info, stream, addr);
+                let _ = handle_stream(ctx).await;
+            });
+        }
+    } else {
+        let _ = negoatiate_replication(server).await?;
+        println!("lets gooooo!!!");
     }
+    Ok(())
 }
 
 async fn handle_stream(mut ctx: Context) -> io::Result<()>  {
@@ -94,6 +101,42 @@ async fn handle_command(cmd: Resp, ctx: &mut Context) -> io::Result<()> {
 
               _ => Err(io::Error::new(io::ErrorKind::InvalidInput, "Err invalid client input, expected array of bulk strings..."))
           }
+}
+
+async fn negotiate_replication(server: RedisServer) -> io::Result<()> {
+    let mut buffer = BytesMut::new();
+    let mut success = false;
+    let mut remote_connection = TcpStream::connect(server.info.get_master_addr()).await?;
+    let mut payload = Vec::new();
+
+    payload.push(Resp::BulkString("PING".as_bytes().to_vec()));
+    RespEncoder::encode_array(&payload, &mut buffer);
+    remote_connection.write_all(&buffer).await?;
+    buffer.clear();
+
+    loop {
+        let mut chunk = [0; 1024];
+        let nbytes = remote_connection.read(&mut chunk).await?;
+
+        if nbytes == 0 {
+            return Err(io::Error::new(io::ErrorKind::ConnectionRefused, "ERR connection refused"));
+        }
+
+        buffer.extend_from_slice(&chunk[..nbytes]);
+        let mut parser = RespParser::new(buffer.clone());
+
+        if let Ok(cmd) = parser.parse() {
+            success = true;
+            match cmd {
+                Resp::SimpleString(s) => {
+                    println!("{s}");
+                },
+                _ => {
+                    return Err(io::Error::new(io::ErrorKind::InvalidInput, "ERR invalid response from master"));
+                }
+            }
+        }
+    }
 }
 
 // args is still encoded as Resp at this point in time...
