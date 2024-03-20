@@ -162,6 +162,6 @@ impl ServerArguments {
         }
         
         // default to local host for now.
-        Self { host: "127.0.0.1".to_string() , port: 6379 }
+        Self { host: "127.0.0.1".to_string(), port }
     }
 }

@@ -16,6 +16,7 @@ pub struct RedisServer {
 impl RedisServer {
     pub async fn new(args: ServerArguments) -> io::Result<Self> {
         let addr = format!("{}:{}", args.host, args.port);
+        println!("Listening on: {}", addr);
         let listener = TcpListener::bind(addr).await?;
         let database = Arc::new(Database::new());
         Ok(RedisServer { listener, database })
