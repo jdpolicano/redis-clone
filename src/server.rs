@@ -6,7 +6,6 @@ use std::io::{ self };
 use crate::resp::{ Resp, RespParser, RespEncoder};
 use crate::database::{ Database };
 use crate::arguments::{ ServerArguments };
-use std::sync::Arc;
 
 pub struct ServerInfo {
     role: String,
@@ -63,28 +62,37 @@ impl ServerInfo {
 
 
 pub struct RedisServer {
+    pub host: String,
+    pub port: u64,
     pub listener: TcpListener,
-    pub database: Arc<Database>,
-    pub info: Arc<ServerInfo>
+    pub database: Database,
+    pub info: ServerInfo
 }
 
 impl RedisServer {
-    pub async fn new(args: ServerArguments) -> io::Result<Self> {
-        let addr = format!("{}:{}", args.host, args.port);
+    pub async fn bind(args: ServerArguments) -> io::Result<Self> {
+        let host = args.host.clone();
+        let port = args.port;
+        let addr = format!("{}:{}", host, port);
+
         println!("Listening on: {}", addr);
+
         let listener = TcpListener::bind(addr).await?;
-        let database = Arc::new(Database::new());
-        let info = Arc::new(ServerInfo::new(args));
-        Ok(RedisServer { listener, database, info })
+        let database = Database::new();
+        let info = ServerInfo::new(args);
+        
+        Ok(RedisServer { host, port, listener, database, info })
     }
 }
 
 // client resp is expected to be a an array of bulk strings...
 pub fn client_resp_to_string(resp: Resp) -> io::Result<String> {
-    // ideally wouldn't clone, but these should generally be small strings...
     match resp {
         Resp::SimpleString(s) => Ok(s),
-        Resp::BulkString(b) => Ok(String::from_utf8(b.clone()).unwrap()),
+        Resp::BulkString(b) => { 
+            let s = String::from_utf8(b).map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "Err utf8 parse error"))?;
+            Ok(s) 
+        },
         _ => Err(io::Error::new(io::ErrorKind::InvalidInput, "Err utf8 parse error")),
     }
 }
@@ -125,17 +133,17 @@ pub async fn write_bulk_string_array(stream: &mut TcpStream, msgs: &[Resp]) -> i
     Ok(())
 }
 
-pub async fn read_and_parse(stream: &mut TcpStream, buf: &mut BytesMut, nbytes: &mut usize) -> io::Result<Resp> {
+pub async fn read_and_parse(stream: &mut TcpStream, buf: &mut BytesMut) -> io::Result<Resp> {
     loop {
         let mut chunk = [0; 1024];
 
-        *nbytes = stream.read(&mut chunk).await?;
+        let nbytes = stream.read(&mut chunk).await?;
 
-        if *nbytes == 0 {
+        if nbytes == 0 {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "unable to parse client stream."))
         }
 
-        buf.extend_from_slice(&chunk[..*nbytes]);
+        buf.extend_from_slice(&chunk[..nbytes]);
 
         let mut parser = RespParser::new(buf.clone());
 

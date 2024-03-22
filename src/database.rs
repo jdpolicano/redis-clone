@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use crate::resp::{Resp};
-use std::sync::{Mutex};
+use tokio::sync::{Mutex};
 use std::time::{Instant, Duration};
 
 #[derive(Eq, Hash, PartialEq, Clone, Debug)]
@@ -50,23 +50,23 @@ impl Database {
         }
     }
 
-    pub fn set(&self, key: Vec<u8>, value: Record) -> Option<Record> {
-        let mut store = self.store.lock().unwrap();
+    pub async fn set(&self, key: Vec<u8>, value: Record) -> Option<Record> {
+        let mut store = self.store.lock().await;
         store.insert(key, value)
     }
 
-    pub fn get(&self, key: &[u8]) -> Option<Record> {
-        let store = self.store.lock().unwrap();
+    pub async fn get(&self, key: &[u8]) -> Option<Record> {
+        let store = self.store.lock().await;
         store.get(key).cloned()
     }
 
-    pub fn exists(&self, key: &[u8]) -> bool {
-        let store = self.store.lock().unwrap();
+    pub async fn exists(&self, key: &[u8]) -> bool {
+        let store = self.store.lock().await;
         store.contains_key(key)
     }
 
-    pub fn del(&self, key: &[u8]) -> bool {
-        let mut store = self.store.lock().unwrap();
+    pub async fn del(&self, key: &[u8]) -> bool {
+        let mut store = self.store.lock().await;
         store.remove(key).is_some()
     }
 }

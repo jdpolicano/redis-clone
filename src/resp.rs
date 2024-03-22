@@ -15,6 +15,8 @@ use bytes::{BytesMut, BufMut};
 // Maps	            RESP3	                    Aggregate	%
 // Sets	            RESP3	                    Aggregate	~
 // Pushes	        RESP3	                    Aggregate	>
+
+// to-do - can we change this to be a copyless parser?
 #[derive(Debug, Clone, PartialEq)]
 pub enum Resp {
     // these are required to be utf8 encoded, hence they are strings instead of u8s

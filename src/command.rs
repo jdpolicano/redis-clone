@@ -75,12 +75,12 @@ impl Command for SetCommand {
         }
 
         if args.nx {
-            if ctx.db.exists(&key) {
+            if ctx.server.database.exists(&key).await {
                 let _  = write_nil(&mut ctx.stream).await;
                 return;
             }
 
-            ctx.db.set(key, value);
+            ctx.server.database.set(key, value).await;
             // this is a conflict - cant get the previous key if we just 
             // set it for the first time.
             if args.get {
@@ -93,12 +93,12 @@ impl Command for SetCommand {
         }
 
         if args.xx {
-            if !ctx.db.exists(&key) {
+            if !ctx.server.database.exists(&key).await {
                 let _ = write_nil(&mut ctx.stream).await;
                 return;
             }
 
-            let prev = ctx.db.set(key, value);
+            let prev = ctx.server.database.set(key, value).await;
 
             if args.get {
                 if let Some(prev) = prev {
@@ -119,7 +119,7 @@ impl Command for SetCommand {
 
         // if we get here, we're just setting the key
         
-        let prev = ctx.db.set(key, value);
+        let prev = ctx.server.database.set(key, value).await;
 
         if args.get {
             if let Some(value) = prev {
@@ -148,7 +148,7 @@ impl Command for GetCommand {
     async fn execute(self, ctx: &mut Context) {
 
         let key = self.0.key;
-        let value = ctx.db.get(&key);
+        let value = ctx.server.database.get(&key).await;
 
         if value.is_none() {
           let mut buf = BytesMut::new();
@@ -162,7 +162,7 @@ impl Command for GetCommand {
         let payload = value.unwrap();
 
         if payload.has_expired() {
-          ctx.db.del(&key);
+          ctx.server.database.del(&key).await;
           let mut buf = BytesMut::new();
           RespEncoder::encode_bulk_string_null(&mut buf);
           if let Err(e) = ctx.stream.write_all(&buf).await {

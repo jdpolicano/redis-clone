@@ -2,23 +2,20 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::net::{TcpStream};
 use std::net::SocketAddr;
-use crate::database::Database;
-use crate::server::ServerInfo;
+use crate::server::{RedisServer};
 
 // The state of the appilication including instances of the database, a logging vec, the current client tcp strea and the socket address.
 pub struct Context {
-    pub db: Arc<Database>,
-    pub info: Arc<ServerInfo>,
-    pub stream: TcpStream,
-    pub addr: SocketAddr,
-    pub logs: Vec<(Instant, String)>,
+    pub server: Arc<RedisServer>,
+    pub stream: TcpStream, // the connected client / peer
+    pub addr: SocketAddr, // the address of this mofo
+    pub logs: Vec<(Instant, String)>, // a place to log stuff - will back these up to disk eventually.
 }
 
 impl Context {
-    pub fn new(db: Arc<Database>, info: Arc<ServerInfo>, stream: TcpStream, addr: SocketAddr) -> Self {
+    pub fn new(server: Arc<RedisServer>, stream: TcpStream, addr: SocketAddr) -> Self {
         Context {
-            db,
-            info,
+            server,
             stream,
             addr,
             logs: Vec::new(),
