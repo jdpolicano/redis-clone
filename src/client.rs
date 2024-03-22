@@ -2,26 +2,8 @@ use tokio::net::{ TcpStream };
 use tokio::io::{ AsyncWriteExt };
 use bytes::BytesMut;
 use std::io::{ self };
-use crate::resp::{ Resp, RespParser, RespEncoder};
+use crate::resp::{ Resp, RespEncoder};
 use crate::server::{ read_and_parse};
-
-// a struct containing the reponse from the server...
-pub struct RedisResponse {
-    raw: BytesMut,
-}
-
-impl RedisResponse {
-    pub fn new(raw: BytesMut) -> Self {
-        RedisResponse {
-            raw,
-        }
-    }
-
-    pub fn as_resp(&self) -> Result<Resp, String> {
-        let mut parser = RespParser::new(self.raw.clone());
-        parser.parse()
-    }
-}
 
 pub struct RequestBuilder {
     args: Vec<Resp>
