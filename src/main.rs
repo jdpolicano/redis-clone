@@ -186,7 +186,7 @@ async fn info(_args: IntoIter<Resp>, ctx: &mut Context) -> io::Result<()> {
 async fn psync(_args: IntoIter<Resp>, ctx: &mut Context) -> io::Result<()> {
     let repl_id = ctx.server.info.get_master_replid();
     let repl_offset = ctx.server.info.get_master_repl_offset();
-    let payload = format!("FULLRESYNC {} {}\r\n", repl_id, repl_offset);
+    let payload = format!("FULLRESYNC {} {}", repl_id, repl_offset);
     let mut buf = BytesMut::new();
     RespEncoder::encode_bulk_string(&payload.as_bytes(), &mut buf);
     ctx.stream.write_all(&buf).await?;
