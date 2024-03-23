@@ -9,27 +9,31 @@ use crate::arguments::{ ServerArguments };
 
 pub struct ServerInfo {
     role: String,
-    replica_of: Option<(String, u64)>,
+    replica_of: Option<(String, String)>, // host and port of master;
     master_replid: String,
-    master_repl_offset: u64,
+    master_repl_offset: i64,
 }
 
 impl ServerInfo {
     pub fn new(args: ServerArguments) -> Self {
-        let role = match args.replica_of {
-            Some(_) => "slave".to_string(),
-            None => "master".to_string(),
-        };
-
-        let replica_of = args.replica_of;
-        // this should use a num generatore in the future...
-        let rand_id = "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string();
-
-        ServerInfo { 
-            role, 
-            replica_of,
-            master_replid: rand_id,
-            master_repl_offset: 0,
+        match args.replica_of {
+            Some(_) => {
+                ServerInfo {
+                    role: "slave".to_string(),
+                    replica_of: args.replica_of,
+                    master_replid: "?".to_string(),
+                    master_repl_offset: -1,
+                }
+            },
+            None => {
+                ServerInfo {
+                    role: "master".to_string(),
+                    replica_of: None,
+                    // this will be generated eventually...
+                    master_replid: "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string(),
+                    master_repl_offset: 0,
+                }
+            },
         }
     }
 
@@ -41,15 +45,8 @@ impl ServerInfo {
         self.master_replid.clone()
     }
 
-    pub fn get_master_repl_offset(&self) -> u64 {
+    pub fn get_master_repl_offset(&self) -> i64 {
         self.master_repl_offset.clone()
-    }
-
-    pub fn get_replica_of(&self) -> (String, u64) {
-        match &self.replica_of {
-            Some((host, port)) => (host.clone(), *port),
-            None => ("".to_string(), 0),
-        }
     }
 
     pub fn get_master_addr(&self) -> String {

@@ -135,7 +135,7 @@ impl SetArguments {
 pub struct ServerArguments {
   pub host: String,
   pub port: u64,
-  pub replica_of: Option<(String, u64)>,
+  pub replica_of: Option<(String, String)>,
 }
 
 impl ServerArguments {
@@ -163,16 +163,9 @@ impl ServerArguments {
                 "--replicaof" => {
                     if let Some(repl_host) = env.next() {
                         if let Some(repl_port) = env.next() {
-                            let as_num = repl_port.parse::<u64>();
-                            match as_num {
-                                Ok(p) => replica_of = Some((repl_host, p)),
-                                Err(e) => println!("unable to parse port {}", e),
-                            };
-                        } else {
-                            println!("no port passed, defaulting to {}", port);
-                            replica_of = Some((repl_host, port));
+                            replica_of = Some((repl_host, repl_port));
                         }
-                    }
+                    };
                 }
                 _ => println!("recevied unsupported arg {}", arg)
             }

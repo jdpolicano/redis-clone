@@ -87,6 +87,7 @@ async fn handle_command(cmd: Resp, ctx: &mut Context) -> io::Result<()> {
                     "SET" => { return set(args_iter, ctx).await },
                     "GET" => { return get(args_iter, ctx).await },
                     "INFO" => { return info(args_iter, ctx).await },
+                    "PSYNC" => { return psync(args_iter, ctx).await },
                     "REPLCONF" => { 
                         // this is a replication command, we need to check if we're a master or slave
                         if ctx.server.info.get_role() == "master" {
@@ -177,7 +178,17 @@ async fn info(_args: IntoIter<Resp>, ctx: &mut Context) -> io::Result<()> {
         ctx.server.info.get_master_replid(),
         ctx.server.info.get_master_repl_offset()
     );
+    RespEncoder::encode_bulk_string(&payload.as_bytes(), &mut buf);
+    ctx.stream.write_all(&buf).await?;
+    Ok(())
+}
 
+async fn psync(args: IntoIter<Resp>, ctx: &mut Context) -> io::Result<()> {
+    let repl_id = ctx.server.info.get_master_replid();
+    let repl_offset = ctx.server.info.get_master_repl_offset();
+
+    let payload = format!("+FULLRESYNC {} {}\r\n", repl_id, repl_offset);
+    let mut buf = BytesMut::new();
     RespEncoder::encode_bulk_string(&payload.as_bytes(), &mut buf);
     ctx.stream.write_all(&buf).await?;
     Ok(())
