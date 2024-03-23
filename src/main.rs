@@ -13,7 +13,7 @@ use redis_starter_rust::server::{
 };
 use redis_starter_rust::resp::{ Resp, RespEncoder };
 use redis_starter_rust::context::Context;
-use redis_starter_rust::command::{Command, PingCommand, EchoCommand, SetCommand, GetCommand};
+use redis_starter_rust::command::{ Command, PingCommand, EchoCommand, SetCommand, GetCommand };
 use redis_starter_rust::arguments::{ EchoArguments, SetArguments, GetArguments, ServerArguments };
 use redis_starter_rust::client::RedisClient;
 
@@ -190,5 +190,41 @@ async fn psync(_args: IntoIter<Resp>, ctx: &mut Context) -> io::Result<()> {
     let mut buf = BytesMut::new();
     RespEncoder::encode_bulk_string(&payload.as_bytes(), &mut buf);
     ctx.stream.write_all(&buf).await?;
+
+    let rdb_file = get_empty_rdb_file();
+    ctx.stream.write(format!("${}\r\n", rdb_file.len()).as_bytes()).await?;
+    ctx.stream.write(&rdb_file).await?;
+    ctx.stream.flush().await?;
     Ok(())
+}
+
+
+
+// TEMPORARY, REMOVE THIS AFTER RDB FILES ARE IMPLEMENTED
+fn get_empty_rdb_file() -> Vec<u8> {
+    let file_hex = b"524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2";
+    let mut res = Vec::with_capacity(file_hex.len() / 2);
+
+    fn decode(hex: u8) -> u8 {
+        if hex as i32 - (b'a' as i32) < 0 {
+            hex - b'0'
+        } else {
+            hex - b'a' + 10
+        }
+    }
+
+    for chunk in file_hex.chunks(2) {
+
+        if chunk.len() < 2 {
+            panic!("Invalid hex string")
+        }
+
+        let upper = chunk[0];
+        let lower = chunk[1];
+
+        let decoded = (decode(upper) << 4) | decode(lower);
+        res.push(decoded);
+    }
+
+    res
 }
