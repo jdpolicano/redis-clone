@@ -13,8 +13,8 @@ use redis_starter_rust::server::{
 };
 use redis_starter_rust::resp::{ Resp, RespEncoder };
 use redis_starter_rust::context::Context;
-use redis_starter_rust::command::{ Command, PingCommand, EchoCommand, SetCommand, GetCommand };
-use redis_starter_rust::arguments::{ EchoArguments, SetArguments, GetArguments, ServerArguments };
+use redis_starter_rust::command::{ Command, PingCommand, EchoCommand, SetCommand, GetCommand, ReplconfCommand };
+use redis_starter_rust::arguments::{ EchoArguments, SetArguments, GetArguments, ServerArguments, ReplconfArguments };
 use redis_starter_rust::client::RedisClient;
 
 #[tokio::main]
@@ -28,16 +28,17 @@ async fn main() -> io::Result<()> {
         let ctx = Context::new(server.clone(), remote, addr);
         // what happens if we start getting requests before this negoatiation is done?
         // will need to add some state to the server struct that tells it if it's ready to accept requests or not.
-        tokio::spawn(async move {
-            let replication = negotiate_replication(ctx).await;
-            if let Err(e) = replication {
-                eprintln!("Error negotiating replication: {}", e);
-            }
-        });
+        let replication = negotiate_replication(ctx).await;
+        if let Err(e) = replication {
+            eprintln!("Error negotiating replication: {}", e);
+        }
+
+        return Ok(());
     }
 
     loop {
         let (stream, addr) = server.listener.accept().await?;
+        println!("Accepted connection from: {}", addr);
         let ctx = Context::new(server.clone(), stream, addr);
         tokio::spawn(async move {
             let _ = handle_stream(ctx).await;
@@ -56,6 +57,7 @@ async fn handle_stream(mut ctx: Context) -> io::Result<()>  {
                 buffer.clear();
             }
             Err(e) => {
+                println!("Error: {}", e);
                 let e_msg = &format!("Error: {}", e);
                 ctx.log(e_msg);
                 write_simple_error(&mut ctx.stream, e_msg).await?;
@@ -67,6 +69,8 @@ async fn handle_stream(mut ctx: Context) -> io::Result<()>  {
 }
 
 async fn handle_command(cmd: Resp, ctx: &mut Context) -> io::Result<()> {
+        let cloned_arguments = cmd.clone();
+        
         match cmd {
             Resp::Array(a) => {
                 if a.len() == 0 {
@@ -81,10 +85,19 @@ async fn handle_command(cmd: Resp, ctx: &mut Context) -> io::Result<()> {
                 // this is okay because we confired array isn't empty already.
                 let cmd_name = client_resp_to_string(args_iter.next().unwrap())?;
 
+                println!("Received command: {}", cmd_name.to_uppercase());
+
                 match cmd_name.to_uppercase().as_str() {
                     "ECHO" => { return echo(args_iter, ctx).await },
                     "PING" => { return ping(ctx).await },
-                    "SET" => { return set(args_iter, ctx).await },
+                    "SET" => { 
+                        // todo - should validate writes and make sure they are coming from the master only when we are the slave...
+                        if ctx.server.info.get_role() == "master" {
+                            ctx.server.add_write(cloned_arguments).await;
+                        };
+
+                        return set(args_iter, ctx).await 
+                    },
                     "GET" => { return get(args_iter, ctx).await },
                     "INFO" => { return info(args_iter, ctx).await },
                     "PSYNC" => { return psync(args_iter, ctx).await },
@@ -92,10 +105,7 @@ async fn handle_command(cmd: Resp, ctx: &mut Context) -> io::Result<()> {
                         // this is a replication command, we need to check if we're a master or slave
                         if ctx.server.info.get_role() == "master" {
                             // we're a master, we don't need to do anything with this command but send OK back
-                            let mut buf = BytesMut::new();
-                            RespEncoder::encode_simple_string("OK", &mut buf);
-                            ctx.stream.write_all(&buf).await?;
-                            Ok(())
+                            return repl_conf(args_iter, ctx).await;
                         } else {
                             // we're a slave, we need to forward this command to the master
                             // we need to check if we've already negotiated replication
@@ -119,8 +129,10 @@ async fn negotiate_replication(mut ctx: Context) -> io::Result<()> {
     client.repl_conf(&["listening-port", &ctx.server.port.to_string()]).await?;
     client.repl_conf(&["capa", "psync2"]).await?;
     client.psync(&["?", "-1"]).await?;
+    println!("synced with master...");
 
     Ok(())
+    
 }
 
 // args is still encoded as Resp at this point in time...
@@ -154,6 +166,13 @@ async fn set(args: IntoIter<Resp>, ctx: &mut Context) -> io::Result<()> {
     
     let s = SetCommand::new(parsed_args.unwrap());
     s.execute(ctx).await;
+
+    if ctx.server.info.get_role() == "master" {
+        ctx.server.sync().await;
+    }
+
+    println!("set a value!!");
+
     Ok(())
 }
 
@@ -167,6 +186,18 @@ async fn get(args: IntoIter<Resp>, ctx: &mut Context) -> io::Result<()> {
 
     let g = GetCommand::new(parsed_args.unwrap());
     g.execute(ctx).await;
+    Ok(())
+}
+
+async fn repl_conf(args: IntoIter<Resp>, ctx: &mut Context) -> io::Result<()> {
+    let parsed_args = ReplconfArguments::parse(args);
+
+    if let Err(e) = parsed_args {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, e));
+    }
+
+    let r = ReplconfCommand::new(parsed_args.unwrap());
+    r.execute(ctx).await;
     Ok(())
 }
 
@@ -187,6 +218,7 @@ async fn psync(_args: IntoIter<Resp>, ctx: &mut Context) -> io::Result<()> {
     let repl_id = ctx.server.info.get_master_replid();
     let repl_offset = ctx.server.info.get_master_repl_offset();
     let payload = format!("FULLRESYNC {} {}", repl_id, repl_offset);
+
     let mut buf = BytesMut::new();
     RespEncoder::encode_bulk_string(&payload.as_bytes(), &mut buf);
     ctx.stream.write_all(&buf).await?;
@@ -195,6 +227,7 @@ async fn psync(_args: IntoIter<Resp>, ctx: &mut Context) -> io::Result<()> {
     ctx.stream.write(format!("${}\r\n", rdb_file.len()).as_bytes()).await?;
     ctx.stream.write(&rdb_file).await?;
     ctx.stream.flush().await?;
+
     Ok(())
 }
 

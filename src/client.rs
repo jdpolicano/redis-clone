@@ -2,7 +2,7 @@ use tokio::net::{ TcpStream };
 use tokio::io::{ AsyncWriteExt };
 use bytes::BytesMut;
 use std::io::{ self };
-use crate::resp::{ Resp, RespEncoder};
+use crate::resp::{ Resp, RespEncoder };
 use crate::server::{ read_and_parse};
 
 pub struct RequestBuilder {

@@ -1,8 +1,10 @@
 // Uncomment this block to pass the first stage
 use tokio::net::{ TcpListener, TcpStream };
 use tokio::io::{ AsyncWriteExt, AsyncReadExt };
+use tokio::sync::{Mutex};
 use bytes::BytesMut;
 use std::io::{ self };
+use std::net::SocketAddr;
 use crate::resp::{ Resp, RespParser, RespEncoder};
 use crate::database::{ Database };
 use crate::arguments::{ ServerArguments };
@@ -58,12 +60,90 @@ impl ServerInfo {
 }
 
 
+pub struct Replica {
+    stream: TcpStream,
+    addr: SocketAddr,
+}
+
+impl Replica {
+    pub fn new(addr: SocketAddr, stream: TcpStream) -> Self {
+        Replica { addr, stream }
+    }
+}
+
+pub struct Offset {
+    offset: usize,
+}
+
+impl Offset {
+    pub fn new() -> Self {
+        Offset { offset: 0 }
+    }
+
+    pub fn get(&self) -> usize {
+        self.offset
+    }
+
+    pub fn inc(&mut self) {
+        self.offset += 1;
+    }
+}
+
+pub struct History {
+    repls: Mutex<Vec<Replica>>,
+    write_history: Mutex<Vec<Resp>>,
+    offset: Mutex<Offset>,
+}
+
+impl History {
+    pub fn new() -> Self {
+        History {
+            repls: Mutex::new(Vec::new()),
+            write_history: Mutex::new(Vec::new()),
+            offset: Mutex::new(Offset::new()),
+        }
+    }
+
+    pub async fn add_replica(&self, addr: SocketAddr, stream: TcpStream) {
+        self.repls.lock().await.push(Replica::new(addr, stream));
+    }
+
+    pub async fn add_write(&self, resp: Resp) {
+        self.write_history.lock().await.push(resp);
+    }
+
+    // todo handle lock errors and write errors etc...
+    pub async fn sync(&self) {
+        // send write history to all replicas
+        let mut offset = self.offset.lock().await;
+        let history = self.write_history.lock().await;
+        let repls = self.repls.lock().await;
+
+        for replica in repls.iter() {
+            // send write history to replica
+            for resp in history[offset.get()..].iter() {
+                // send resp to replica
+                let mut stream = TcpStream::connect(replica.addr).await.unwrap();
+                let mut buf = BytesMut::new();
+                RespEncoder::encode_resp(resp, &mut buf);
+                let _ = stream.write_all(&buf).await;
+                stream.shutdown().await.unwrap();
+            }
+
+            println!("Synced with replica: {:?}", replica.addr);
+        }
+
+        offset.inc();
+    }
+}
+
 pub struct RedisServer {
     pub host: String,
     pub port: u64,
     pub listener: TcpListener,
     pub database: Database,
-    pub info: ServerInfo
+    pub info: ServerInfo,
+    pub history: History,
 }
 
 impl RedisServer {
@@ -77,8 +157,21 @@ impl RedisServer {
         let listener = TcpListener::bind(addr).await?;
         let database = Database::new();
         let info = ServerInfo::new(args);
+        let history = History::new();
         
-        Ok(RedisServer { host, port, listener, database, info })
+        Ok(RedisServer { host, port, listener, database, info, history })
+    }
+
+    pub async fn add_replica(&self, addr: SocketAddr, stream: TcpStream) {
+        self.history.add_replica(addr, stream).await;
+    }
+
+    pub async fn add_write(&self, resp: Resp) {
+        self.history.add_write(resp).await;
+    }
+
+    pub async fn sync(&self) {
+        self.history.sync().await;
     }
 }
 

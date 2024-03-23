@@ -132,6 +132,50 @@ impl SetArguments {
     }
 }
 
+pub struct ReplconfArguments {
+    pub listening_port: Option<String>,
+    pub capa: Option<String>,
+}
+
+impl ReplconfArguments {
+    pub fn parse(mut args: IntoIter<Resp>) -> Result<ReplconfArguments, String> {
+        let mut listening_port = None;
+        let mut capa = None;
+
+        while let Some(arg) = args.next() {
+            match arg {
+                Resp::BulkString(bs) => {
+                    let as_str = String::from_utf8(bs)
+                        .map_err(|_| "ERR argument not utf8")?;
+
+                    match &as_str.to_uppercase()[..] {
+                        "LISTENING-PORT" => {
+                            if let Some(Resp::BulkString(next_arg)) = args.next() {
+                                listening_port = Some(String::from_utf8(next_arg)
+                                    .map_err(|_| "ERR invalid port format")?);
+                            } else {
+                                return Err("ERR expected port after 'LISTENING-PORT'".to_string());
+                            }
+                        },
+                        "CAPA" => {
+                            if let Some(Resp::BulkString(next_arg)) = args.next() {
+                                capa = Some(String::from_utf8(next_arg)
+                                    .map_err(|_| "ERR invalid capability format")?);
+                            } else {
+                                return Err("ERR expected capability after 'CAPA'".to_string());
+                            }
+                        },
+                        _ => return Err("ERR unknown or unexpected argument".to_string()),
+                    }
+                },
+                _ => return Err("ERR arguments must be bulk strings".to_string()),
+            }
+        }
+
+        Ok(ReplconfArguments { listening_port, capa })
+    }
+}
+
 pub struct ServerArguments {
   pub host: String,
   pub port: u64,

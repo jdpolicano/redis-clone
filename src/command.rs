@@ -1,9 +1,10 @@
 use tokio::io::AsyncWriteExt;
+use std::net::SocketAddr;
 use bytes::BytesMut;
 use crate::resp::{RespEncoder};
 use crate::server::{ write_simple_error, write_nil, write_nil_bulk_string, write_simple_string };
 use crate::context::Context;
-use crate::arguments::{ SetArguments, EchoArguments, GetArguments };
+use crate::arguments::{ SetArguments, EchoArguments, GetArguments, ReplconfArguments };
 
 // Command trait to represent any executable command.
 // Commands must be no
@@ -16,6 +17,10 @@ pub struct PingCommand;
 pub struct EchoCommand(EchoArguments);
 pub struct SetCommand(SetArguments);
 pub struct GetCommand(GetArguments);
+pub struct ReplconfCommand
+
+
+(ReplconfArguments);
 
 impl PingCommand {
     pub fn new() -> Self {
@@ -176,5 +181,21 @@ impl Command for GetCommand {
         if let Err(e) = ctx.stream.write_all(&buf).await {
             ctx.log(&format!("Write to stream failed {}", e));
         }
+    }
+}
+
+impl ReplconfCommand {
+    pub fn new(args: ReplconfArguments) -> Self {
+        ReplconfCommand(args)
+    }
+}
+
+
+impl Command for ReplconfCommand {
+    async fn execute(self, ctx: &mut Context) {
+        let args = self.0;
+        let mut buf = BytesMut::new();
+        RespEncoder::encode_simple_string("OK", &mut buf);
+        let _ = ctx.stream.write_all(&buf).await;
     }
 }
