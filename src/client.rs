@@ -73,6 +73,25 @@ impl<'a> RedisClient<'a> {
         self.assert_res_ok(resp)
     }
 
+    pub async fn psync(&mut self, args: &[&str]) -> io::Result<()> {
+        let mut builder = RequestBuilder::new();
+
+        builder.arg("PSYNC");
+
+        for arg in args {
+            builder.arg(arg);
+        }
+
+        let write_buf = builder.build();
+
+        self.stream.write_all(&write_buf).await?;
+
+        let mut read_buf = BytesMut::new();
+        let resp = read_and_parse(self.stream, &mut read_buf).await?;
+        println!("{:?}", resp);
+        Ok(())
+    }
+
     
     pub fn assert_res_ok(&self, actual: Resp) -> io::Result<()> {
         self.assert_res_is_simple(actual, "OK")

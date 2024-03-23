@@ -80,6 +80,7 @@ async fn handle_command(cmd: Resp, ctx: &mut Context) -> io::Result<()> {
 
                 // this is okay because we confired array isn't empty already.
                 let cmd_name = client_resp_to_string(args_iter.next().unwrap())?;
+
                 match cmd_name.to_uppercase().as_str() {
                     "ECHO" => { return echo(args_iter, ctx).await },
                     "PING" => { return ping(ctx).await },
@@ -112,9 +113,12 @@ async fn handle_command(cmd: Resp, ctx: &mut Context) -> io::Result<()> {
 
 async fn negotiate_replication(mut ctx: Context) -> io::Result<()> {
     let mut client = RedisClient::from_stream(&mut ctx.stream);
+
     client.ping().await?;
     client.repl_conf(&["listening-port", &ctx.server.port.to_string()]).await?;
     client.repl_conf(&["capa", "psync2"]).await?;
+    client.psync(&["?", "-1"]).await?;
+
     Ok(())
 }
 
