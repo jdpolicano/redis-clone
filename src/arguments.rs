@@ -178,14 +178,14 @@ impl ReplconfArguments {
 
 pub struct ServerArguments {
   pub host: String,
-  pub port: u64,
+  pub port: String,
   pub replica_of: Option<(String, String)>,
 }
 
 impl ServerArguments {
     pub fn parse() -> ServerArguments {
         let mut env = env::args();
-        let mut port = 6379;
+        let mut port = "6379".to_string();
         let mut replica_of = None;
 
         env.next(); // skip executable path...
@@ -194,11 +194,7 @@ impl ServerArguments {
             match arg.as_str() {
                 "--port" => {
                     if let Some(n) = env.next() {
-                        let as_num = n.parse::<u64>();
-                        match as_num {
-                            Ok(p) => port = p,
-                            Err(e) => println!("unable to parse port {}", e),
-                        };
+                        port = n;
                     } else {
                         println!("no port passed, defaulting to {}", port);
                     }
@@ -217,5 +213,9 @@ impl ServerArguments {
         
         // default to local host for now.
         Self { host: "127.0.0.1".to_string(), port, replica_of }
+    }
+
+    pub fn is_replica(&self) -> bool {
+        self.replica_of.is_some()
     }
 }

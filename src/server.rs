@@ -1,41 +1,26 @@
 // Uncomment this block to pass the first stage
 use tokio::net::{ TcpListener, TcpStream };
 use tokio::io::{ AsyncWriteExt, AsyncReadExt };
-use tokio::sync::{Mutex};
+use tokio::sync::{ Mutex };
 use bytes::BytesMut;
 use std::io::{ self };
-use std::net::SocketAddr;
 use crate::resp::{ Resp, RespParser, RespEncoder};
 use crate::database::{ Database };
 use crate::arguments::{ ServerArguments };
 
 pub struct ServerInfo {
     role: String,
-    replica_of: Option<(String, String)>, // host and port of master;
     master_replid: String,
     master_repl_offset: i64,
 }
 
 impl ServerInfo {
-    pub fn new(args: ServerArguments) -> Self {
-        match args.replica_of {
-            Some(_) => {
-                ServerInfo {
-                    role: "slave".to_string(),
-                    replica_of: args.replica_of,
-                    master_replid: "?".to_string(),
-                    master_repl_offset: -1,
-                }
-            },
-            None => {
-                ServerInfo {
-                    role: "master".to_string(),
-                    replica_of: None,
-                    // this will be generated eventually...
-                    master_replid: "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string(),
-                    master_repl_offset: 0,
-                }
-            },
+    pub fn new() -> Self {
+        ServerInfo {
+            role: "master".to_string(),
+            // this will be generated eventually...
+            master_replid: "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string(),
+            master_repl_offset: 0,
         }
     }
 
@@ -51,26 +36,37 @@ impl ServerInfo {
         self.master_repl_offset.clone()
     }
 
-    pub fn get_master_addr(&self) -> String {
-        match &self.replica_of {
-            Some((host, port)) => format!("{}:{}", host, port),
-            None => "".to_string(),
-        }
+    pub fn set_role(&mut self, role: String) {
+        self.role = role;
+    }
+
+    pub fn set_master_repl_offset(&mut self, offset: i64) {
+        self.master_repl_offset = offset;
+    }
+    
+    pub fn set_master_replid(&mut self, replid: String) {
+        self.master_replid = replid;
+    }
+
+    pub fn to_replica(&mut self) {
+        self.set_role("slave".to_string());
+        self.set_master_replid("?".to_string());
+        self.set_master_repl_offset(-1);
     }
 }
 
-
+#[derive(Debug)]
 pub struct Replica {
-    stream: TcpStream,
-    addr: SocketAddr,
+    pub stream: TcpStream,
 }
 
 impl Replica {
-    pub fn new(addr: SocketAddr, stream: TcpStream) -> Self {
-        Replica { addr, stream }
+    pub fn new(stream: TcpStream) -> Self {
+        Replica { stream }
     }
 }
 
+#[derive(Debug)]
 pub struct Offset {
     offset: usize,
 }
@@ -89,89 +85,135 @@ impl Offset {
     }
 }
 
+#[derive(Debug)]
 pub struct History {
-    repls: Mutex<Vec<Replica>>,
-    write_history: Mutex<Vec<Resp>>,
-    offset: Mutex<Offset>,
+    repls: Vec<Replica>,
+    write_history: Vec<Resp>,
+    offset: Offset,
 }
 
 impl History {
     pub fn new() -> Self {
         History {
-            repls: Mutex::new(Vec::new()),
-            write_history: Mutex::new(Vec::new()),
-            offset: Mutex::new(Offset::new()),
+            repls: Vec::new(),
+            write_history: Vec::new(),
+            offset: Offset::new(),
         }
     }
 
-    pub async fn add_replica(&self, addr: SocketAddr, stream: TcpStream) {
-        self.repls.lock().await.push(Replica::new(addr, stream));
+    pub fn add_replica(&mut self, stream: TcpStream) {
+        self.repls.push(Replica::new(stream));
     }
 
-    pub async fn add_write(&self, resp: Resp) {
-        self.write_history.lock().await.push(resp);
+    pub fn add_write(&mut self, resp: Resp) {
+        self.write_history.push(resp);
     }
 
     // todo handle lock errors and write errors etc...
-    pub async fn sync(&self) {
+    pub async fn sync(&mut self) {
         // send write history to all replicas
-        let mut offset = self.offset.lock().await;
-        let history = self.write_history.lock().await;
-        let repls = self.repls.lock().await;
-
-        for replica in repls.iter() {
+        for replica in self.repls.iter_mut() {
             // send write history to replica
-            for resp in history[offset.get()..].iter() {
+            for resp in self.write_history[self.offset.get()..].iter() {
                 // send resp to replica
-                let mut stream = TcpStream::connect(replica.addr).await.unwrap();
+                let stream = &mut replica.stream;
                 let mut buf = BytesMut::new();
                 RespEncoder::encode_resp(resp, &mut buf);
                 let _ = stream.write_all(&buf).await;
-                stream.shutdown().await.unwrap();
             }
 
-            println!("Synced with replica: {:?}", replica.addr);
+            println!("Synced with replica: {:?}", replica);
         }
 
-        offset.inc();
+        self.offset.inc();
     }
 }
 
 pub struct RedisServer {
-    pub host: String,
-    pub port: u64,
-    pub listener: TcpListener,
-    pub database: Database,
-    pub info: ServerInfo,
-    pub history: History,
+    pub host: String, // read only
+    pub port: String, // read only
+    pub listener: TcpListener, // read
+    pub database: Database, // 
+    pub info: ServerInfo, //
+    pub history: Mutex<History>, // read / write
+    pub arguments: ServerArguments, // read only
+    pub is_replica: bool, // read/write at first, then becomes readonly...
 }
 
 impl RedisServer {
     pub async fn bind(args: ServerArguments) -> io::Result<Self> {
-        let host = args.host.clone();
-        let port = args.port;
-        let addr = format!("{}:{}", host, port);
+        let addr = format!("{}:{}", args.host, args.port);
 
         println!("Listening on: {}", addr);
 
         let listener = TcpListener::bind(addr).await?;
-        let database = Database::new();
-        let info = ServerInfo::new(args);
-        let history = History::new();
+        let database = Database::new(); // interio is already locked so no need to manage this ourselves.
+        let info = ServerInfo::new();
+        let history = Mutex::new(History::new());
         
-        Ok(RedisServer { host, port, listener, database, info, history })
+        Ok(RedisServer { 
+            host: args.host.clone(), 
+            port: args.port.clone(), 
+            listener, 
+            database, 
+            info, 
+            history,
+            arguments: args,
+            is_replica: false,
+        })
     }
 
-    pub async fn add_replica(&self, addr: SocketAddr, stream: TcpStream) {
-        self.history.add_replica(addr, stream).await;
+    pub async fn add_replica(&self, stream: TcpStream) {
+        self.history.lock().await.add_replica(stream);
     }
 
     pub async fn add_write(&self, resp: Resp) {
-        self.history.add_write(resp).await;
+        self.history.lock().await.add_write(resp);
     }
 
     pub async fn sync(&self) {
-        self.history.sync().await;
+        self.history.lock().await.sync().await;
+    }
+
+    pub fn set_role(&mut self, role: String) {
+        self.info.set_role(role);
+    }
+
+    pub fn set_master_repl_offset(&mut self, offset: i64) {
+        self.info.set_master_repl_offset(offset);
+    }
+
+    pub fn set_master_replid(&mut self, replid: String) {
+        self.info.set_master_replid(replid);
+    }
+
+    pub fn get_role(&self) -> String {
+        self.info.get_role()
+    }
+
+    pub fn get_master_replid(&self) -> String {
+        self.info.get_master_replid()
+    }
+
+    pub fn get_master_repl_offset(&self) -> i64 {
+        self.info.get_master_repl_offset()
+    }
+
+    pub fn is_replica(&self) -> bool {
+        self.is_replica
+    }
+
+    pub fn to_replica(&mut self) {
+        self.is_replica = true;
+        self.info.to_replica();
+    }
+
+    pub fn get_master_address(&self) -> Option<String> {
+        if let Some((host, port)) = &self.arguments.replica_of {
+            Some(format!("{}:{}", host, port))
+        } else {
+            None
+        }
     }
 }
 
@@ -230,7 +272,7 @@ pub async fn read_and_parse(stream: &mut TcpStream, buf: &mut BytesMut) -> io::R
         let nbytes = stream.read(&mut chunk).await?;
 
         if nbytes == 0 {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "unable to parse client stream."))
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "ERR connection closed"));
         }
 
         buf.extend_from_slice(&chunk[..nbytes]);

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use crate::resp::{Resp};
-use tokio::sync::{Mutex};
+use tokio::sync::{RwLock};
 use std::time::{Instant, Duration};
 
 #[derive(Eq, Hash, PartialEq, Clone, Debug)]
@@ -39,34 +39,30 @@ impl Record {
 
 pub struct Database {
     // (key, value)
-    store: Mutex<HashMap<Vec<u8>, Record>>,
+    store: RwLock<HashMap<Vec<u8>, Record>>,
 }
 
 
 impl Database {
     pub fn new() -> Self {
         Database {
-            store: Mutex::new(HashMap::new()),
+            store: RwLock::new(HashMap::new()),
         }
     }
 
     pub async fn set(&self, key: Vec<u8>, value: Record) -> Option<Record> {
-        let mut store = self.store.lock().await;
-        store.insert(key, value)
+        self.store.write().await.insert(key, value)
     }
 
     pub async fn get(&self, key: &[u8]) -> Option<Record> {
-        let store = self.store.lock().await;
-        store.get(key).cloned()
+        self.store.read().await.get(key).cloned()
     }
 
     pub async fn exists(&self, key: &[u8]) -> bool {
-        let store = self.store.lock().await;
-        store.contains_key(key)
+        self.store.read().await.contains_key(key)
     }
 
     pub async fn del(&self, key: &[u8]) -> bool {
-        let mut store = self.store.lock().await;
-        store.remove(key).is_some()
+        self.store.write().await.remove(key).is_some()
     }
 }

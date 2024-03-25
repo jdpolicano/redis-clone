@@ -1,8 +1,7 @@
 use tokio::io::AsyncWriteExt;
-use std::net::SocketAddr;
 use bytes::BytesMut;
 use crate::resp::{RespEncoder};
-use crate::server::{ write_simple_error, write_nil, write_nil_bulk_string, write_simple_string };
+use crate::server::{ write_nil, write_nil_bulk_string, write_simple_string };
 use crate::context::Context;
 use crate::arguments::{ SetArguments, EchoArguments, GetArguments, ReplconfArguments };
 
@@ -72,12 +71,6 @@ impl Command for SetCommand {
         if let Some(expiration) = expiration {
             value.set_expiry(expiration.as_duration());
         }
-    
-        if args.nx && args.xx {
-            let msg = "ERR syntax error: nx and xx options are mutually exclusive";
-            let _ = write_simple_error(&mut ctx.stream, msg).await;
-            return;
-        }
 
         if args.nx {
             if ctx.server.database.exists(&key).await {
@@ -123,7 +116,6 @@ impl Command for SetCommand {
         }
 
         // if we get here, we're just setting the key
-        
         let prev = ctx.server.database.set(key, value).await;
 
         if args.get {
@@ -147,6 +139,14 @@ impl GetCommand {
     pub fn new(args: GetArguments) -> Self {
         GetCommand(args)
     }
+
+    pub async fn delete_key_and_return(self, key: &[u8], ctx: &mut Context) {
+        ctx.server.database.del(&key).await;
+        let mut buf = BytesMut::new();
+        RespEncoder::encode_bulk_string_null(&mut buf);
+        let _ = ctx.stream.write_all(&buf).await;
+        return;
+    }
 }
 
 impl Command for GetCommand {
@@ -156,31 +156,25 @@ impl Command for GetCommand {
         let value = ctx.server.database.get(&key).await;
 
         if value.is_none() {
-          let mut buf = BytesMut::new();
-          RespEncoder::encode_bulk_string_null(&mut buf);
-          if let Err(e) = ctx.stream.write_all(&buf).await {
-            ctx.log(&format!("{}", e));
-          }
-          return;
+            let mut buf = BytesMut::new();
+            RespEncoder::encode_bulk_string_null(&mut buf);
+            let _ = ctx.stream.write_all(&buf).await;
+            return;
         }
 
         let payload = value.unwrap();
 
         if payload.has_expired() {
-          ctx.server.database.del(&key).await;
-          let mut buf = BytesMut::new();
-          RespEncoder::encode_bulk_string_null(&mut buf);
-          if let Err(e) = ctx.stream.write_all(&buf).await {
-            ctx.log(&format!("Write to stream failed {}", e));
-          }
-          return;
+            ctx.server.database.del(&key).await;
+            let mut buf = BytesMut::new();
+            RespEncoder::encode_bulk_string_null(&mut buf);
+            let _ = ctx.stream.write_all(&buf).await;
+            return
         }
 
         let mut buf = BytesMut::new();
         RespEncoder::encode_bulk_string(&payload.data, &mut buf);
-        if let Err(e) = ctx.stream.write_all(&buf).await {
-            ctx.log(&format!("Write to stream failed {}", e));
-        }
+        let _ = ctx.stream.write_all(&buf).await; 
     }
 }
 
@@ -193,7 +187,6 @@ impl ReplconfCommand {
 
 impl Command for ReplconfCommand {
     async fn execute(self, ctx: &mut Context) {
-        let args = self.0;
         let mut buf = BytesMut::new();
         RespEncoder::encode_simple_string("OK", &mut buf);
         let _ = ctx.stream.write_all(&buf).await;
