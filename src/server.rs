@@ -83,6 +83,14 @@ impl Offset {
     pub fn inc(&mut self) {
         self.offset += 1;
     }
+
+    pub fn add(&mut self, n: usize) {
+        self.offset += n;
+    }
+
+    pub fn set(&mut self, n: usize) {
+        self.offset = n;
+    }
 }
 
 #[derive(Debug)]
@@ -112,8 +120,8 @@ impl History {
     // todo handle lock errors and write errors etc...
     pub async fn sync(&mut self) {
         // send write history to all replicas
-        for replica in self.repls.iter_mut() {
-            // send write history to replica
+        for replica in self.repls.iter_mut()  {
+            // send write history to replica;
             for resp in self.write_history[self.offset.get()..].iter() {
                 // send resp to replica
                 let stream = &mut replica.stream;
@@ -122,10 +130,9 @@ impl History {
                 let _ = stream.write_all(&buf).await;
             }
 
-            println!("Synced with replica: {:?}", replica);
         }
 
-        self.offset.inc();
+        self.offset.set(self.write_history.len());
     }
 }
 
@@ -147,8 +154,13 @@ impl RedisServer {
         println!("Listening on: {}", addr);
 
         let listener = TcpListener::bind(addr).await?;
-        let database = Database::new(); // interio is already locked so no need to manage this ourselves.
-        let info = ServerInfo::new();
+        let database = Database::new(); 
+        let mut info = ServerInfo::new();
+
+        if args.replica_of.is_some() {
+            info.to_replica();
+        }
+
         let history = Mutex::new(History::new());
         
         Ok(RedisServer { 
@@ -272,7 +284,7 @@ pub async fn read_and_parse(stream: &mut TcpStream, buf: &mut BytesMut) -> io::R
         let nbytes = stream.read(&mut chunk).await?;
 
         if nbytes == 0 {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "ERR connection closed"));
+            return Err(io::Error::new(io::ErrorKind::ConnectionAborted, "ERR connection closed"));
         }
 
         buf.extend_from_slice(&chunk[..nbytes]);

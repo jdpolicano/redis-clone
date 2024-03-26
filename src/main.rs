@@ -21,25 +21,27 @@ use redis_starter_rust::client::RedisClient;
 async fn main() -> io::Result<()> {
     let server_args = ServerArguments::parse();
     let should_replicate = server_args.replica_of.is_some();
-    let mut server = RedisServer::bind(server_args).await?;
+    let server = Arc::new(RedisServer::bind(server_args).await?);
     
     // if we're a replica establish a connection and start a tight loop for now...
     if should_replicate {
-        // change some internal info to prepare for negotiations.
-        server.to_replica();
-        run_replica(server).await?;
-        return Ok(())
+        if let Some (master_address) = server.get_master_address() {
+            let stream = TcpStream::connect(master_address).await?;
+            let addr = stream.peer_addr()?;
+            let mut ctx = Context::new(server.clone(), stream, addr);
+            let _ = negotiate_replication(&mut ctx).await?;
+    
+            tokio::spawn(async move {
+                loop {
+                    let _ = handle_stream(&mut ctx).await;
+                }
+            });
+        }
     }
 
-    let _ = run_master(server).await;
-    Ok(())
-}
-
-async fn run_master(server: RedisServer) -> io::Result<()> {
-    let server_rc = Arc::new(server);
     loop {
-        let (stream, addr) = server_rc.listener.accept().await?;
-        let mut ctx = Context::new(server_rc.clone(), stream, addr);
+        let (stream, addr) = server.listener.accept().await?;
+        let mut ctx = Context::new(server.clone(), stream, addr);
         tokio::spawn(async move {
             let _ = handle_stream(&mut ctx).await;
             if ctx.keep_connection_alive {
@@ -48,35 +50,6 @@ async fn run_master(server: RedisServer) -> io::Result<()> {
             }
         });
     }
-}
-
-async fn run_replica(server: RedisServer) -> io::Result<()> {
-    if let Some (master_address) = server.get_master_address() {
-        let server_rc = Arc::new(server);
-
-        let stream = TcpStream::connect(master_address).await?;
-        let addr = stream.peer_addr()?;
-        let mut ctx = Context::new(server_rc.clone(), stream, addr);
-        let _ = negotiate_replication(&mut ctx).await?;
-
-        tokio::spawn(async move {
-            let _ = handle_stream(&mut ctx).await;
-        });
-
-        loop {
-            let (stream, addr) = server_rc.listener.accept().await?;
-            let mut ctx = Context::new(server_rc.clone(), stream, addr);
-            tokio::spawn(async move {
-                let _ = handle_stream(&mut ctx).await;
-                if ctx.keep_connection_alive {
-                    println!("replica will be saved!!!");
-                    ctx.preserve_stream().await;
-                }
-            });
-        }
-    }
-
-    Err(io::Error::new(io::ErrorKind::InvalidInput, "ERR replication failed"))
 }
 
 async fn handle_stream(ctx: &mut Context) -> io::Result<()>  {
@@ -106,12 +79,6 @@ async fn handle_stream(ctx: &mut Context) -> io::Result<()>  {
 
 
 async fn handle_command(cmd: Resp, ctx: &mut Context) -> io::Result<()> {
-        let cloned_arguments = cmd.clone();
-
-        if ctx.server.get_role() == "slave" {
-            println!("received command from master: {:?}", cmd);
-        }
-        
         match cmd {
             Resp::Array(a) => {
                 if a.len() == 0 {
@@ -120,7 +87,7 @@ async fn handle_command(cmd: Resp, ctx: &mut Context) -> io::Result<()> {
                     return Err(io::Error::new(io::ErrorKind::InvalidInput, msg));
                 }
 
-                // reverse the arguments so we can pop them out in the correct order..
+                let a_copy = a.clone(); // we will need this to propagate the command to the replica later.
                 let mut args_iter = a.into_iter();
 
                 // this is okay because we confired array isn't empty already.
@@ -129,11 +96,9 @@ async fn handle_command(cmd: Resp, ctx: &mut Context) -> io::Result<()> {
                 match cmd_name.to_uppercase().as_str() {
                     "ECHO" => { return echo(args_iter, ctx).await },
                     "PING" => { return ping(ctx).await },
-                    "SET" => { 
-                        if ctx.server.get_role() == "master" {
-                            ctx.server.add_write(cloned_arguments).await;
-                        }
-
+                    "SET" => {
+                        // remember the command for replication 
+                        ctx.server.add_write(Resp::Array(a_copy)).await;
                         return set(args_iter, ctx).await; 
                     },
                     "GET" => { return get(args_iter, ctx).await },
@@ -145,10 +110,6 @@ async fn handle_command(cmd: Resp, ctx: &mut Context) -> io::Result<()> {
                             // we're a master, we don't need to do anything with this command but send OK back
                             return repl_conf(args_iter, ctx).await;
                         } else {
-                            // we're a slave, we need to forward this command to the master
-                            // we need to check if we've already negotiated replication
-                            // if we haven't, we need to wait until we have before we can forward this command
-                            // if we have, we can forward this command to the master
                             return Err(io::Error::new(io::ErrorKind::InvalidInput, "ERR not yet implemented"));
                         }
                      }
@@ -203,10 +164,12 @@ async fn set(args: IntoIter<Resp>, ctx: &mut Context) -> io::Result<()> {
     }
     
     let s = SetCommand::new(parsed_args.unwrap());
+
     s.execute(ctx).await;
 
     if ctx.server.get_role() == "master" {
         ctx.server.sync().await;
+        println!("finished syncing...");
     }
 
     Ok(())
