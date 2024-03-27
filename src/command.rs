@@ -46,6 +46,10 @@ impl EchoCommand {
 
 impl Command for EchoCommand {
     async fn execute(self, ctx: &mut Context) {
+        if ctx.server.is_replica() {
+            return;
+        }
+
         let mut buf = BytesMut::new();
         RespEncoder::encode_resp(&self.0.message, &mut buf);
         let res = ctx.stream.write_all(&buf).await;
@@ -67,13 +71,15 @@ impl Command for SetCommand {
         let key = args.key;
         let mut value = args.value;
         let expiration = args.expiration;
-
+        let is_replica = ctx.server.is_replica();
+    
         if let Some(expiration) = expiration {
             value.set_expiry(expiration.as_duration());
         }
 
         if args.nx {
             if ctx.server.database.exists(&key).await {
+                if is_replica { return; };
                 let _  = write_nil(&mut ctx.stream).await;
                 return;
             }
@@ -81,17 +87,20 @@ impl Command for SetCommand {
             ctx.server.database.set(key, value).await;
             // this is a conflict - cant get the previous key if we just 
             // set it for the first time.
-            if args.get {
+            if args.get  {
+                if is_replica { return; };
                 let _ = write_nil(&mut ctx.stream).await;
                 return;
             }
 
+            if is_replica { return; };
             let _ = write_simple_string(&mut ctx.stream, "OK").await;
             return;
         }
 
         if args.xx {
             if !ctx.server.database.exists(&key).await {
+                if is_replica { return; };
                 let _ = write_nil(&mut ctx.stream).await;
                 return;
             }
@@ -100,6 +109,7 @@ impl Command for SetCommand {
 
             if args.get {
                 if let Some(prev) = prev {
+                    if is_replica { return; };
                     let mut buf = BytesMut::new();
                     RespEncoder::encode_bulk_string(&prev.data, &mut buf);
                     let _ = ctx.stream.write_all(&buf).await;
@@ -107,29 +117,41 @@ impl Command for SetCommand {
                 }
 
                 // key didn't exist, so we return nil
+                if is_replica { return; };
                 let _ = write_nil(&mut ctx.stream).await;
                 return;
             }
 
+            if is_replica { return; };
             let _ = write_simple_string(&mut ctx.stream, "OK").await;
             return;
         }
 
         // if we get here, we're just setting the key
+        if is_replica {
+            println!("Replica setting key: {:?} to value {:?}", key, value);
+        }
+        
         let prev = ctx.server.database.set(key, value).await;
 
+        if is_replica {
+            println!("set success...")
+        }
+
         if args.get {
+            if is_replica { return; };
             if let Some(value) = prev {
                 let mut buf = BytesMut::new();
                 RespEncoder::encode_bulk_string(&value.data, &mut buf);
                 let _ = ctx.stream.write_all(&buf).await;
                 return;
             }
-
+            if is_replica { return; };
             let _ = write_nil_bulk_string(&mut ctx.stream).await;
             return;
         }
 
+        if is_replica { return; };
         let _ = write_simple_string(&mut ctx.stream, "OK").await;
     }
 }
@@ -154,6 +176,8 @@ impl Command for GetCommand {
 
         let key = self.0.key;
         let value = ctx.server.database.get(&key).await;
+        println!("Value: {:?}", value);
+        println!("is_replica: {:?}", ctx.server.is_replica());
 
         if value.is_none() {
             let mut buf = BytesMut::new();
@@ -171,6 +195,7 @@ impl Command for GetCommand {
             let _ = ctx.stream.write_all(&buf).await;
             return
         }
+
 
         let mut buf = BytesMut::new();
         RespEncoder::encode_bulk_string(&payload.data, &mut buf);

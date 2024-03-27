@@ -20,11 +20,11 @@ use redis_starter_rust::client::RedisClient;
 #[tokio::main]
 async fn main() -> io::Result<()> {
     let server_args = ServerArguments::parse();
-    let should_replicate = server_args.replica_of.is_some();
     let server = Arc::new(RedisServer::bind(server_args).await?);
     
-    // if we're a replica establish a connection and start a tight loop for now...
-    if should_replicate {
+    // if we're a replica establish a connection and spawn a thread to listen for
+    // propgated commands from the master.
+    if server.is_replica() {
         if let Some (master_address) = server.get_master_address() {
             let stream = TcpStream::connect(master_address).await?;
             let addr = stream.peer_addr()?;
@@ -36,6 +36,8 @@ async fn main() -> io::Result<()> {
                     let _ = handle_stream(&mut ctx).await;
                 }
             });
+        } else {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "ERR no master address provided"))
         }
     }
 
@@ -93,13 +95,22 @@ async fn handle_command(cmd: Resp, ctx: &mut Context) -> io::Result<()> {
                 // this is okay because we confired array isn't empty already.
                 let cmd_name = client_resp_to_string(args_iter.next().unwrap())?;
 
+                println!("recieved command: {}", cmd_name.to_uppercase());
+                println!("isreplica?: {}", ctx.server.is_replica());
+
                 match cmd_name.to_uppercase().as_str() {
                     "ECHO" => { return echo(args_iter, ctx).await },
                     "PING" => { return ping(ctx).await },
                     "SET" => {
-                        // remember the command for replication 
-                        ctx.server.add_write(Resp::Array(a_copy)).await;
-                        return set(args_iter, ctx).await; 
+                        let res = set(args_iter, ctx).await;
+
+                        if ctx.server.get_role() == "master" {
+                            ctx.server.add_write(Resp::Array(a_copy)).await;
+                            ctx.server.sync().await;
+                            println!("finished syncing...");
+                        }
+
+                        return res
                     },
                     "GET" => { return get(args_iter, ctx).await },
                     "INFO" => { return info(args_iter, ctx).await },
@@ -127,7 +138,14 @@ async fn negotiate_replication(ctx: &mut Context) -> io::Result<()> {
     client.ping().await?;
     client.repl_conf(&["listening-port", &ctx.server.port]).await?;
     client.repl_conf(&["capa", "psync2"]).await?;
-    client.psync(&["?", "-1"]).await?;
+
+    let master_replid = ctx.server
+        .get_master_replid();
+    let master_repl_offset = ctx.server
+        .get_master_repl_offset()
+        .to_string();
+
+    client.psync(&[&master_replid, &master_repl_offset]).await?;
 
     println!("synced with master...");
 
@@ -166,11 +184,6 @@ async fn set(args: IntoIter<Resp>, ctx: &mut Context) -> io::Result<()> {
     let s = SetCommand::new(parsed_args.unwrap());
 
     s.execute(ctx).await;
-
-    if ctx.server.get_role() == "master" {
-        ctx.server.sync().await;
-        println!("finished syncing...");
-    }
 
     Ok(())
 }

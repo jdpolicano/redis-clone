@@ -150,6 +150,7 @@ pub struct RedisServer {
 impl RedisServer {
     pub async fn bind(args: ServerArguments) -> io::Result<Self> {
         let addr = format!("{}:{}", args.host, args.port);
+        let is_replica = args.replica_of.is_some();
 
         println!("Listening on: {}", addr);
 
@@ -157,7 +158,7 @@ impl RedisServer {
         let database = Database::new(); 
         let mut info = ServerInfo::new();
 
-        if args.replica_of.is_some() {
+        if is_replica {
             info.to_replica();
         }
 
@@ -171,7 +172,7 @@ impl RedisServer {
             info, 
             history,
             arguments: args,
-            is_replica: false,
+            is_replica
         })
     }
 
