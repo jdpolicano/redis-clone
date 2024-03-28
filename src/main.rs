@@ -22,7 +22,7 @@ async fn main() -> io::Result<()> {
     let server_args = ServerArguments::parse();
     let server = Arc::new(RedisServer::bind(server_args).await?);
     
-    // if we're a replica establish a connection and spawn a thread to listen for
+    // if we're a replica establish a connection and spawn a process to listen for
     // propgated commands from the master.
     if server.is_replica() {
         if let Some (master_address) = server.get_master_address() {
@@ -42,14 +42,14 @@ async fn main() -> io::Result<()> {
     }
 
     loop {
-        let (stream, addr) = server.listener.accept().await?;
-        let mut ctx = Context::new(server.clone(), stream, addr);
+        // let (stream, addr) = server.listener.accept().await?;
+        //let mut ctx = Context::new(server.clone(), stream, addr);
         tokio::spawn(async move {
-            let _ = handle_stream(&mut ctx).await;
-            if ctx.keep_connection_alive {
-                println!("replica will be saved!!!");
-                ctx.preserve_stream().await;
-            }
+            // let _ = handle_stream(&mut ctx).await;
+            // if ctx.keep_connection_alive {
+            //     println!("replica will be saved!!!");
+            //     ctx.preserve_stream().await;
+            // }
         });
     }
 }
@@ -105,7 +105,7 @@ async fn handle_command(cmd: Resp, ctx: &mut Context) -> io::Result<()> {
                         let res = set(args_iter, ctx).await;
 
                         if ctx.server.get_role() == "master" {
-                            ctx.server.add_write(Resp::Array(a_copy)).await;
+                            ctx.server.add_write(Resp::Array(a_copy));
                             ctx.server.sync().await;
                             println!("finished syncing...");
                         }

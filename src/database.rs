@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use crate::resp::{Resp};
-use tokio::sync::{RwLock};
+use std::sync::{ RwLock };
 use std::time::{Instant, Duration};
 
 #[derive(Eq, Hash, PartialEq, Clone, Debug)]
@@ -50,19 +50,19 @@ impl Database {
         }
     }
 
-    pub async fn set(&self, key: Vec<u8>, value: Record) -> Option<Record> {
-        self.store.write().await.insert(key, value)
+    pub fn set(&self, key: Vec<u8>, value: Record) -> Option<Record> {
+        self.store.write().unwrap().insert(key, value)
     }
 
-    pub async fn get(&self, key: &[u8]) -> Option<Record> {
-        self.store.read().await.get(key).cloned()
+    pub fn get(&self, key: &[u8]) -> Option<Record> {
+        self.store.read().unwrap().get(key).cloned()
     }
 
-    pub async fn exists(&self, key: &[u8]) -> bool {
-        self.store.read().await.contains_key(key)
+    pub fn exists(&self, key: &[u8]) -> bool {
+        self.store.read().unwrap().contains_key(key)
     }
 
-    pub async fn del(&self, key: &[u8]) -> bool {
-        self.store.write().await.remove(key).is_some()
+    pub fn del(&self, key: &[u8]) -> bool {
+        self.store.write().unwrap().remove(key).is_some()
     }
 }

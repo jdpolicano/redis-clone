@@ -151,8 +151,7 @@ impl RedisServer {
     pub async fn bind(args: ServerArguments) -> io::Result<Self> {
         let addr = format!("{}:{}", args.host, args.port);
         let is_replica = args.replica_of.is_some();
-
-        println!("Listening on: {}", addr);
+     
 
         let listener = TcpListener::bind(addr).await?;
         let database = Database::new(); 

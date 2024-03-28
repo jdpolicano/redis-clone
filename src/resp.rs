@@ -1,4 +1,4 @@
-use bytes::{BytesMut, BufMut};
+use bytes::{BytesMut, Bytes, BufMut};
 // represents all of the possible types within a resp encoded string
 // RESP data type	Minimal protocol version	Category	First byte
 // Simple strings	RESP2	                    Simple	    +

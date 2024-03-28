@@ -78,13 +78,13 @@ impl Command for SetCommand {
         }
 
         if args.nx {
-            if ctx.server.database.exists(&key).await {
+            if ctx.server.database.exists(&key) {
                 if is_replica { return; };
                 let _  = write_nil(&mut ctx.stream).await;
                 return;
             }
 
-            ctx.server.database.set(key, value).await;
+            ctx.server.database.set(key, value);
             // this is a conflict - cant get the previous key if we just 
             // set it for the first time.
             if args.get  {
@@ -99,13 +99,13 @@ impl Command for SetCommand {
         }
 
         if args.xx {
-            if !ctx.server.database.exists(&key).await {
+            if !ctx.server.database.exists(&key) {
                 if is_replica { return; };
                 let _ = write_nil(&mut ctx.stream).await;
                 return;
             }
 
-            let prev = ctx.server.database.set(key, value).await;
+            let prev = ctx.server.database.set(key, value);
 
             if args.get {
                 if let Some(prev) = prev {
@@ -131,8 +131,8 @@ impl Command for SetCommand {
         if is_replica {
             println!("Replica setting key: {:?} to value {:?}", key, value);
         }
-        
-        let prev = ctx.server.database.set(key, value).await;
+
+        let prev = ctx.server.database.set(key, value);
 
         if is_replica {
             println!("set success...")
@@ -163,7 +163,7 @@ impl GetCommand {
     }
 
     pub async fn delete_key_and_return(self, key: &[u8], ctx: &mut Context) {
-        ctx.server.database.del(&key).await;
+        ctx.server.database.del(&key);
         let mut buf = BytesMut::new();
         RespEncoder::encode_bulk_string_null(&mut buf);
         let _ = ctx.stream.write_all(&buf).await;
@@ -175,7 +175,7 @@ impl Command for GetCommand {
     async fn execute(self, ctx: &mut Context) {
 
         let key = self.0.key;
-        let value = ctx.server.database.get(&key).await;
+        let value = ctx.server.database.get(&key);
         println!("Value: {:?}", value);
         println!("is_replica: {:?}", ctx.server.is_replica());
 
@@ -189,7 +189,7 @@ impl Command for GetCommand {
         let payload = value.unwrap();
 
         if payload.has_expired() {
-            ctx.server.database.del(&key).await;
+            ctx.server.database.del(&key);
             let mut buf = BytesMut::new();
             RespEncoder::encode_bulk_string_null(&mut buf);
             let _ = ctx.stream.write_all(&buf).await;

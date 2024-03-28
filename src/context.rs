@@ -25,7 +25,7 @@ impl Context {
     }
 
     pub async fn preserve_stream(self) {
-        self.server.add_replica(self.stream).await;
+        self.server.add_replica(self.stream);
     }
 
     pub fn keep_alive(&mut self) {
