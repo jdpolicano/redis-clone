@@ -1,7 +1,5 @@
-use bytes::BytesMut;
-use tokio::net::TcpStream;
-use std::sync::{Mutex, MutexGuard};
-use crate::resp::{Resp, RespParser, RespEncoder};
+use tokio::sync::{Mutex};
+use crate::resp::{Resp};
 use crate::connection::Connection;
 
 #[derive(Debug)]
@@ -28,8 +26,12 @@ impl History {
     }
 
     // todo - handle poison errors here...
-    pub fn add_replica(&self) -> MutexGuard<'_, HistoryInner> {
-        self.inner.lock().unwrap()
+    pub async fn add_replica(&self, stream: Connection) {
+       self.inner.lock().await.add_replica(stream);
+    }
+
+    pub async fn add_write(&self, resp: Resp) {
+        self.inner.lock().await.add_write(resp).await;
     }
 }
 
@@ -52,8 +54,9 @@ impl HistoryInner {
     }
 
     pub async fn add_write(&mut self, resp: Resp) {
-        // to-do handle cases where the connection is dropped.
+        println!("replicating write to replicas...");
         for replica in self.repls.iter_mut() {
+            println!("writing to replica...{:?}", replica);
             let _ = replica.stream.write_message(&resp).await;
         }
         self.write_history.push(resp);

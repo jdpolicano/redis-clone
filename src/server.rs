@@ -10,7 +10,7 @@ use crate::history::History;
 pub struct ServerInfo {
     role: String,
     master_replid: String,
-    master_repl_offset: Option<i64>,
+    master_repl_offset: i64,
     master_host: Option<String>,
 }
 
@@ -28,7 +28,7 @@ impl ServerInfo {
             role: "master".to_string(),
             // this will be generated eventually...
             master_replid: "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string(),
-            master_repl_offset: None,
+            master_repl_offset: 0,
             master_host: None
         }
     }
@@ -37,7 +37,7 @@ impl ServerInfo {
         ServerInfo {
             role: "slave".to_string(),
             master_replid: "?".to_string(),
-            master_repl_offset: Some(-1),
+            master_repl_offset: -1,
             master_host: Some(format!("{}:{}", master_host.0, master_host.1))
         }
     }
@@ -50,12 +50,16 @@ impl ServerInfo {
         self.master_replid.clone()
     }
 
-    pub fn get_master_repl_offset(&self) -> Option<i64> {
+    pub fn get_master_repl_offset(&self) -> i64 {
         self.master_repl_offset.clone()
     }
 
+    pub fn get_master_host(&self) -> Option<String> {
+        self.master_host.clone()
+    }
+
     pub fn is_replica(&self) -> bool {
-        if self.role == "master" { true } else { false }
+        if self.role == "master" { false } else { true }
     }
 }
 
