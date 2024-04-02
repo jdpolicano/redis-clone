@@ -36,7 +36,7 @@ impl Record {
     }
 }
 
-
+#[derive(Debug)]
 pub struct Database {
     // (key, value)
     store: RwLock<HashMap<Vec<u8>, Record>>,

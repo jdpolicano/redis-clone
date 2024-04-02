@@ -1,38 +1,48 @@
-use std::sync::Arc;
-use std::time::Instant;
 use tokio::net::{TcpStream};
-use std::net::SocketAddr;
-use crate::server::{RedisServer};
+use std::io;
+use std::sync::Arc;
+use crate::connection::Connection;
+use crate::database::Database; 
+use crate::history::History;
+use crate::server::ServerInfo;
+use crate::command::{CmdParser, Cmd, Command};
 
-// The state of the appilication including instances of the database, a logging vec, the current client tcp strea and the socket address.
+// The state of the request response cycle for each client request...
 pub struct Context {
-    pub server: Arc<RedisServer>,
-    pub stream: TcpStream, // the connected client / peer. Inside an option so that ownership can be taken out of the context.
-    pub addr: SocketAddr, // the address of this mofo
-    pub keep_connection_alive: bool, // whether to keep this connection as a replica.
-    pub logs: Vec<(Instant, String)>, // a place to log stuff - will back these up to disk eventually.
+    pub stream: Connection, // the currently connected client.
+    pub database: Arc<Database>, // database to alter if need be.
+    pub history: Arc<History>, // struct for writing to replicas and recording transactions.
+    pub info: Arc<ServerInfo> // information about the current server running.
 }
 
 impl Context {
-    pub fn new(server: Arc<RedisServer>, stream: TcpStream, addr: SocketAddr) -> Self {
+    pub fn new(stream: Connection, database: Arc<Database>, history: Arc<History>, info: Arc<ServerInfo>) -> Self {
         Context {
-            server,
             stream,
-            addr,
-            keep_connection_alive: false,
-            logs: Vec::new(),
+            database,
+            history,
+            info
         }
     }
 
-    pub async fn preserve_stream(self) {
-        self.server.add_replica(self.stream);
-    }
+    pub async fn handle(&mut self) -> io::Result<()> {
+        let message = self.stream.read_message().await?;
+        let cmd = CmdParser::parse(message);
 
-    pub fn keep_alive(&mut self) {
-        self.keep_connection_alive = true;
-    }
+        match cmd {
+            Cmd::Unknown => {
+                self.stream.write_err("ERR unknown command name").await?;
+            }
 
-    pub fn log(&mut self, msg: &str) {
-        self.logs.push((Instant::now(), format!("{}: {}", self.addr, msg)));
+            Cmd::Unexpected(err_msg) => {
+                self.stream.write_err(&format!("ERR {}", err_msg)).await?;
+            }
+
+            valid_cmd => {
+                valid_cmd.execute(&mut self.stream, self.database.clone()).await;
+            }
+        }
+
+        Ok(())
     }
 }

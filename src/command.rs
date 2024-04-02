@@ -1,205 +1,145 @@
+use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use bytes::BytesMut;
-use crate::resp::{RespEncoder};
-use crate::server::{ write_nil, write_nil_bulk_string, write_simple_string };
-use crate::context::Context;
+use crate::resp::{RespEncoder, Resp};
+use crate::connection::Connection;
+use crate::database::Database;
 use crate::arguments::{ SetArguments, EchoArguments, GetArguments, ReplconfArguments };
 
 // Command trait to represent any executable command.
-// Commands must be no
 pub trait Command {
-    fn execute(self, ctx: &mut Context) -> impl std::future::Future<Output = ()> + Send;
+    async fn execute(self, stream: &mut Connection, database: Arc<Database>);
 }
 
-// Implement the Command trait for different commands
+// List of commands
 pub struct PingCommand;
 pub struct EchoCommand(EchoArguments);
 pub struct SetCommand(SetArguments);
 pub struct GetCommand(GetArguments);
-pub struct ReplconfCommand
+pub struct ReplconfCommand(ReplconfArguments);
 
+// Enum for each type to ease parsing into commands.
+pub enum Cmd {
+    Unknown, // well formed command, unknown name
+    Unexpected(String), // malformed command with err message...
+    Ping(PingCommand),
+    Echo(EchoCommand),
+    Set(SetCommand),
+    Get(GetCommand)
+}
 
-(ReplconfArguments);
-
-impl PingCommand {
-    pub fn new() -> Self {
-        PingCommand
+impl Command for Cmd {
+    async fn execute(self, stream: &mut Connection, database: Arc<Database>) {
+        match self {
+            Cmd::Ping(c) => c.execute(stream, database).await,
+            Cmd::Echo(c) => c.execute(stream, database).await,
+            Cmd::Set(c) => c.execute(stream, database).await,
+            Cmd::Get(c) => c.execute(stream, database).await,
+            _ => {}
+        }
     }
 }
 
 impl Command for PingCommand {
-    async fn execute(self, ctx: &mut Context) {
-        let mut buf = BytesMut::new();
-        RespEncoder::encode_simple_string("PONG", &mut buf);
-        let res = ctx.stream.write_all(&buf).await;
-        if let Err(e) = res {
-            ctx.log(&format!("Error writing to stream: {}", e));
-        }
+    async fn execute(self, stream: &mut Connection, database: Arc<Database>) {
+        let _ = stream.write_str("PONG").await;
     }
 }
 
-impl EchoCommand {
-    pub fn new(args: EchoArguments) -> Self {
-        EchoCommand(args)
-    }
-}
 
 impl Command for EchoCommand {
-    async fn execute(self, ctx: &mut Context) {
-        if ctx.server.is_replica() {
-            return;
-        }
-
-        let mut buf = BytesMut::new();
-        RespEncoder::encode_resp(&self.0.message, &mut buf);
-        let res = ctx.stream.write_all(&buf).await;
-        if let Err(e) = res {
-            ctx.log(&format!("Error writing to stream: {}", e));
-        }
+    async fn execute(self, stream: &mut Connection, database: Arc<Database>) {
+        let _ = stream.write_message(&self.0.message).await;
     }
 }
 
-impl SetCommand {
-  pub fn new(args: SetArguments) -> Self {
-    SetCommand(args)
-  }
-}
 
 impl Command for SetCommand {
-    async fn execute(self, ctx: &mut Context) {
+    async fn execute(self, stream: &mut Connection, database: Arc<Database>) {
         let args = self.0;
         let key = args.key;
         let mut value = args.value;
         let expiration = args.expiration;
-        let is_replica = ctx.server.is_replica();
     
         if let Some(expiration) = expiration {
             value.set_expiry(expiration.as_duration());
         }
 
         if args.nx {
-            if ctx.server.database.exists(&key) {
-                if is_replica { return; };
-                let _  = write_nil(&mut ctx.stream).await;
+            if database.exists(&key) {
+                let _ = stream.write_message(&Resp::BulkStringNull).await;
                 return;
             }
-
-            ctx.server.database.set(key, value);
-            // this is a conflict - cant get the previous key if we just 
-            // set it for the first time.
+        
+            database.set(key, value);
+            // this is a conflict - cant get the previous key if we just set it.
             if args.get  {
-                if is_replica { return; };
-                let _ = write_nil(&mut ctx.stream).await;
+                let _ = stream.write_message(&Resp::BulkStringNull).await;
                 return;
             }
 
-            if is_replica { return; };
-            let _ = write_simple_string(&mut ctx.stream, "OK").await;
+            let _ = stream.write_str("OK").await;
             return;
         }
 
         if args.xx {
-            if !ctx.server.database.exists(&key) {
-                if is_replica { return; };
-                let _ = write_nil(&mut ctx.stream).await;
+            if !database.exists(&key) {
+                let _ = stream.write_message(&Resp::BulkStringNull).await;
                 return;
             }
 
-            let prev = ctx.server.database.set(key, value);
+            let prev = database.set(key, value);
 
             if args.get {
                 if let Some(prev) = prev {
-                    if is_replica { return; };
-                    let mut buf = BytesMut::new();
-                    RespEncoder::encode_bulk_string(&prev.data, &mut buf);
-                    let _ = ctx.stream.write_all(&buf).await;
+                    let _ = stream.write_bytes(&prev.data).await;
                     return;
                 }
-
-                // key didn't exist, so we return nil
-                if is_replica { return; };
-                let _ = write_nil(&mut ctx.stream).await;
+                
+                let _ = stream.write_message(&Resp::BulkStringNull).await;
                 return;
             }
 
-            if is_replica { return; };
-            let _ = write_simple_string(&mut ctx.stream, "OK").await;
+
+            let _ = stream.write_str("OK").await;
             return;
         }
 
         // if we get here, we're just setting the key
-        if is_replica {
-            println!("Replica setting key: {:?} to value {:?}", key, value);
-        }
-
-        let prev = ctx.server.database.set(key, value);
-
-        if is_replica {
-            println!("set success...")
-        }
+        let prev = database.set(key, value);
 
         if args.get {
-            if is_replica { return; };
             if let Some(value) = prev {
-                let mut buf = BytesMut::new();
-                RespEncoder::encode_bulk_string(&value.data, &mut buf);
-                let _ = ctx.stream.write_all(&buf).await;
+                let _ = stream.write_bytes(&value.data);
                 return;
             }
-            if is_replica { return; };
-            let _ = write_nil_bulk_string(&mut ctx.stream).await;
+            let _ = stream.write_message(&Resp::BulkStringNull).await;
             return;
         }
 
-        if is_replica { return; };
-        let _ = write_simple_string(&mut ctx.stream, "OK").await;
-    }
-}
-
-
-impl GetCommand {
-    pub fn new(args: GetArguments) -> Self {
-        GetCommand(args)
-    }
-
-    pub async fn delete_key_and_return(self, key: &[u8], ctx: &mut Context) {
-        ctx.server.database.del(&key);
-        let mut buf = BytesMut::new();
-        RespEncoder::encode_bulk_string_null(&mut buf);
-        let _ = ctx.stream.write_all(&buf).await;
-        return;
+        let _ = stream.write_str("OK").await;
     }
 }
 
 impl Command for GetCommand {
-    async fn execute(self, ctx: &mut Context) {
-
+    async fn execute(self, stream: &mut Connection, database: Arc<Database>) {
         let key = self.0.key;
-        let value = ctx.server.database.get(&key);
-        println!("Value: {:?}", value);
-        println!("is_replica: {:?}", ctx.server.is_replica());
+        let value = database.get(&key);
 
         if value.is_none() {
-            let mut buf = BytesMut::new();
-            RespEncoder::encode_bulk_string_null(&mut buf);
-            let _ = ctx.stream.write_all(&buf).await;
+            let _ = stream.write_message(&Resp::BulkStringNull).await;
             return;
         }
 
         let payload = value.unwrap();
 
         if payload.has_expired() {
-            ctx.server.database.del(&key);
-            let mut buf = BytesMut::new();
-            RespEncoder::encode_bulk_string_null(&mut buf);
-            let _ = ctx.stream.write_all(&buf).await;
+            database.del(&key);
+            let _ = stream.write_message(&Resp::BulkStringNull).await;
             return
         }
 
-
-        let mut buf = BytesMut::new();
-        RespEncoder::encode_bulk_string(&payload.data, &mut buf);
-        let _ = ctx.stream.write_all(&buf).await; 
+        let _ = stream.write_bytes(&payload.data).await; 
     }
 }
 
@@ -211,9 +151,79 @@ impl ReplconfCommand {
 
 
 impl Command for ReplconfCommand {
-    async fn execute(self, ctx: &mut Context) {
-        let mut buf = BytesMut::new();
-        RespEncoder::encode_simple_string("OK", &mut buf);
-        let _ = ctx.stream.write_all(&buf).await;
+    async fn execute(self, stream: &mut Connection, database: Arc<Database>) {
+        // let mut buf = BytesMut::new();
+        // RespEncoder::encode_simple_string("OK", &mut buf);
+        // let _ = stream.write_all(&buf).await;
+        let _ = stream.write_str("OK").await;
+    }
+}
+
+
+pub struct CmdParser;
+
+impl CmdParser {
+    pub fn parse(input: Resp) -> Cmd {
+        match input {
+            Resp::Array(args) => {
+                if args.len() < 1 {
+                    return Cmd::Unknown
+                }
+
+                let mut args_iter = args.into_iter();
+                let cmd_name = Self::resp_to_string(args_iter.next());
+
+                if let Some(name) = cmd_name {
+                    return Self::route_cmd(name, args_iter)
+                } else {
+                    return Cmd::Unexpected("malformed command name".to_string())
+                }
+            },
+
+            _ => return Cmd::Unexpected("expected array of args".to_string())
+        }
+    }
+
+    fn route_cmd(name: String, args: std::vec::IntoIter<Resp>) -> Cmd {
+        match name.to_uppercase().as_str() {
+            "PING" => { 
+                return Cmd::Ping(PingCommand) 
+            },
+
+            "ECHO" => {
+                let cmd_args = EchoArguments::parse(args);
+                if let Err(e) = cmd_args {
+                    return Cmd::Unexpected(e);
+                }
+                return Cmd::Echo(EchoCommand(cmd_args.unwrap()));
+            }
+
+            "GET" => {
+                let cmd_args = GetArguments::parse(args);
+                if let Err(e) = cmd_args {
+                    return Cmd::Unexpected(e);
+                }
+                return Cmd::Get(GetCommand(cmd_args.unwrap()));
+            }
+
+            "SET" => {
+                let cmd_args = SetArguments::parse(args);
+                if let Err(e) = cmd_args {
+                    return Cmd::Unexpected(e);
+                }
+                return Cmd::Set(SetCommand(cmd_args.unwrap()));
+            }
+
+            _ => Cmd::Unknown
+        }
+    }
+
+
+    fn resp_to_string(input: Option<Resp>) -> Option<String> {
+        match input {
+            Some(Resp::SimpleString(s)) => Some(s),
+            Some(Resp::BulkString(bytes)) => { String::from_utf8(bytes).ok() },
+            _ => None
+        }
     }
 }

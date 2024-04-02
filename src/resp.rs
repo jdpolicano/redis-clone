@@ -40,13 +40,13 @@ pub enum Resp {
 }
 
 
-pub struct RespParser {
-    data: BytesMut,
+pub struct RespParser<'a> {
+    data: &'a [u8],
     index: usize,
 }
 
-impl RespParser {
-    pub fn new(data: BytesMut) -> RespParser {
+impl<'a> RespParser<'a>{ 
+    pub fn new(data: &'a [u8]) -> RespParser {
         RespParser {
             data,
             index: 0,
