@@ -1,7 +1,7 @@
 use crate::resp::{ Resp, RespParser, RespEncoder };
 use bytes::{ BytesMut };
 use tokio::net::{ TcpStream };
-use tokio::io::{ AsyncReadExt, AsyncWriteExt, BufStream };
+use tokio::io::{ AsyncReadExt, AsyncWriteExt };
 use std::io::{ self };
 
 #[derive(Debug)]
@@ -89,7 +89,7 @@ impl Connection {
     pub async fn write_str(&mut self, payload: &str) -> Result<(), Error> {
         if !self.writable { return Err(Error::NotWritable) }
         RespEncoder::encode_simple_string(payload, &mut self.write_buf);
-        let result = self.write_bytes(payload.as_bytes()).await;
+        let result = self.stream.write_all(&self.write_buf).await;
         self.write_buf.clear();
         Ok(result?)
     }
@@ -97,7 +97,7 @@ impl Connection {
     pub async fn write_err(&mut self, payload: &str) -> Result<(), Error> {
         if !self.writable { return Err(Error::NotWritable) }
         RespEncoder::encode_simple_error(payload, &mut self.write_buf);
-        let result = self.write_bytes(payload.as_bytes()).await;
+        let result = self.stream.write_all(&self.write_buf).await;
         self.write_buf.clear();
         Ok(result?)
     }
@@ -111,13 +111,14 @@ impl Connection {
     }
 
     pub fn write(&mut self, payload: &[u8]) {
-        if self.writable { return; }
+        if !self.writable { return; }
         self.write_buf.extend_from_slice(payload);
     }
 
     pub async fn flush(&mut self) -> Result<(), Error> {
         self.stream.write_all(&self.write_buf).await?;
         self.stream.flush().await?;
+        self.write_buf.clear();
         Ok(())
     }
 

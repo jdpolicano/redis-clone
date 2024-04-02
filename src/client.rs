@@ -1,8 +1,5 @@
-use tokio::net::{ TcpStream };
-use tokio::io::{ AsyncWriteExt };
-use bytes::BytesMut;
-use std::io::{ self };
-use crate::resp::{ Resp, RespEncoder };
+use std::io;
+use crate::resp::{ Resp };
 use crate::connection::Connection;
 // use crate::server::{ read_and_parse};
 
@@ -53,8 +50,7 @@ impl<'a> RedisClient<'a> {
         
         let resp_arr = Resp::Array(arguments);
         self.stream.write_message(&resp_arr).await?;
-        let response = self.stream.read_message().await?;
-        println!("{:?}", response);
+        let _ = self.stream.read_message().await?;
         Ok(())
     }
 

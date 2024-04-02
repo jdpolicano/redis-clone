@@ -1,11 +1,10 @@
-use tokio::net::{TcpStream};
 use std::io;
 use std::sync::Arc;
 use crate::connection::Connection;
 use crate::database::Database; 
 use crate::history::History;
 use crate::server::ServerInfo;
-use crate::command::{CmdParser, Cmd, Command};
+use crate::command::{CmdParser, Cmd, Command, Transaction};
 
 // The state of the request response cycle for each client request...
 pub struct Context {
@@ -25,21 +24,44 @@ impl Context {
         }
     }
 
-    pub async fn handle(&mut self) -> io::Result<()> {
-        let message = self.stream.read_message().await?;
-        let cmd = CmdParser::parse(message);
-
-        match cmd {
-            Cmd::Unknown => {
-                self.stream.write_err("ERR unknown command name").await?;
+    pub async fn handle(mut self) -> io::Result<()> {
+        loop {
+            let message = self.stream.read_message().await?;
+            let cmd = CmdParser::parse(message.clone());
+            
+            if self.info.is_replica() {
+                println!("received replica command: {:?}", message);
             }
+    
+            match cmd {
+                Cmd::Unknown => {
+                    self.stream.write_err("ERR unknown command name").await?;
+                }
+    
+                Cmd::Unexpected(err_msg) => {
+                    self.stream.write_err(&format!("ERR {}", err_msg)).await?;
+                }
+    
+                valid_cmd => {
+                    let transaction = valid_cmd.execute(&mut self.stream, self.database.clone(), self.info.clone(), self.history.clone()).await;
 
-            Cmd::Unexpected(err_msg) => {
-                self.stream.write_err(&format!("ERR {}", err_msg)).await?;
-            }
+                    match transaction {
+                        Transaction::Replicate if !self.info.is_replica() => {
+                            // preserver this connection and move on.
+                            self.history.add_replica(self.stream).await;
+                            break;
+                        }
 
-            valid_cmd => {
-                valid_cmd.execute(&mut self.stream, self.database.clone()).await;
+                        Transaction::Write if !self.info.is_replica() => {
+                            println!("writing to replicas from master...");
+                            self.history.add_write(message).await;
+                        }
+
+                        _ => {
+
+                        }
+                    }
+                }
             }
         }
 
