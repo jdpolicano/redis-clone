@@ -50,7 +50,8 @@ impl<'a> RedisClient<'a> {
         
         let resp_arr = Resp::Array(arguments);
         self.stream.write_message(&resp_arr).await?;
-        let _ = self.stream.read_message().await?;
+        let message1 = self.stream.read_message().await?;
+        let message2 = self.stream.read_rdb().await;
         Ok(())
     }
 
