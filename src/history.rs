@@ -54,9 +54,7 @@ impl HistoryInner {
     }
 
     pub async fn add_write(&mut self, resp: Resp) {
-        println!("replicating write to replicas...");
         for replica in self.repls.iter_mut() {
-            println!("writing to replica...{:?}", replica);
             let _ = replica.stream.write_message(&resp).await;
         }
         self.write_history.push(resp);

@@ -28,10 +28,6 @@ impl Context {
         loop {
             let message = self.stream.read_message().await?;
             let cmd = CmdParser::parse(message.clone());
-            
-            if self.info.is_replica() {
-                println!("received replica command: {:?}", message);
-            }
     
             match cmd {
                 Cmd::Unknown => {
