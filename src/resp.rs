@@ -18,7 +18,6 @@ use std::error::Error;
 // Maps	            RESP3	                    Aggregate	%
 // Sets	            RESP3	                    Aggregate	~
 // Pushes	        RESP3	                    Aggregate	>
-
 #[derive(Debug, PartialEq)]
 pub enum ParseError {
     UnexpectedEndOfInput,
@@ -29,6 +28,7 @@ pub enum ParseError {
     InvalidFloat(std::num::ParseFloatError),
     InvalidFloatConversion,
     InvalidLength,
+    InvalidStringConversion
 }
 
 impl From<std::string::FromUtf8Error> for ParseError {
@@ -66,6 +66,7 @@ impl Display for ParseError {
             ParseError::InvalidFloat(e) => write!(f, "Invalid float: {}", e),
             ParseError::InvalidFloatConversion => write!(f, "Invalid float conversion"),
             ParseError::InvalidLength => write!(f, "Invalid length"),
+            ParseError::InvalidStringConversion => write!(f, "Invalid string conversion"),
         }
     }
 }
@@ -94,6 +95,164 @@ pub enum Resp {
     Push(Vec<Resp>),
 }
 
+impl TryInto<String> for Resp {
+    type Error = ParseError;
+
+    fn try_into(self) -> Result<String, Self::Error> {
+        match self {
+            Resp::SimpleString(s) => Ok(s),
+            Resp::SimpleError(s) => Ok(s),
+            Resp::Integer(i) => Ok(i.to_string()), 
+            Resp::BulkString(bytes) => Ok(String::from_utf8(bytes)?),
+            Resp::BulkStringNull => Ok("".to_string()),
+            Resp::ArrayNull => Ok("".to_string()),
+            Resp::Boolean(b) => Ok(b.to_string()),
+            Resp::Null => Ok("".to_string()),
+            Resp::Double(f) => Ok(f.to_string()),
+            Resp::VerbatimString(bytes) => Ok(String::from_utf8(bytes)?),
+            _ => Err(ParseError::InvalidStringConversion),
+        }
+    }
+}
+
+impl Resp {
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            Resp::SimpleString(s) | Resp::SimpleError(s) => Some(s),
+            Resp::BulkString(bytes) => std::str::from_utf8(bytes).ok(),
+            Resp::BulkStringNull => Some(""),
+            Resp::ArrayNull => Some(""),
+            Resp::VerbatimString(bytes) => std::str::from_utf8(bytes).ok(),
+            Resp::Null => Some(""),
+            _ => None,
+        }
+    }
+
+    pub fn as_bytes(&self) -> Option<&[u8]> {
+        match self {
+            Resp::SimpleString(s) | Resp::SimpleError(s) => Some(s.as_bytes()),
+            Resp::BulkString(bytes) => Some(bytes),
+            Resp::BulkError(bytes) => Some(bytes),
+            Resp::VerbatimString(bytes) => Some(bytes),
+            _ => None,
+        }
+    }
+
+    pub fn as_i64(&self) -> Option<i64> {
+        match self {
+            Resp::Integer(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    pub fn as_f64(&self) -> Option<f64> {
+        match self {
+            Resp::Double(f) => Some(*f),
+            _ => None,
+        }
+    }
+
+    pub fn as_bool(&self) -> Option<bool> {
+        match self {
+            Resp::Boolean(b) => Some(*b),
+            _ => None,
+        }
+    }
+
+    pub fn as_slice(&self) -> Option<&[Resp]> {
+        match self {
+            Resp::Array(arr) => Some(arr),
+            _ => None,
+        }
+    }
+
+    pub fn as_vec(self) -> Option<Vec<Resp>> {
+        match self {
+            Resp::Array(arr) => Some(arr),
+            _ => None,
+        }
+    }
+
+    pub fn is_bulk_string(&self) -> bool {
+        matches!(self, Resp::BulkString(_))
+    }
+
+    pub fn is_array(&self) -> bool {
+        matches!(self, Resp::Array(_))
+    }
+
+    pub fn is_null(&self) -> bool {
+        matches!(self, Resp::Null)
+    }
+
+    pub fn is_integer(&self) -> bool {
+        matches!(self, Resp::Integer(_))
+    }
+
+    pub fn is_simple_string(&self) -> bool {
+        matches!(self, Resp::SimpleString(_))
+    }
+
+    pub fn is_simple_error(&self) -> bool {
+        matches!(self, Resp::SimpleError(_))
+    }
+
+    pub fn is_boolean(&self) -> bool {
+        matches!(self, Resp::Boolean(_))
+    }
+
+    pub fn is_double(&self) -> bool {
+        matches!(self, Resp::Double(_))
+    }
+
+    pub fn is_big_number(&self) -> bool {
+        matches!(self, Resp::BigNumber(_))
+    }
+
+    pub fn is_bulk_error(&self) -> bool {
+        matches!(self, Resp::BulkError(_))
+    }
+
+    pub fn is_verbatim_string(&self) -> bool {
+        matches!(self, Resp::VerbatimString(_))
+    }
+
+    pub fn is_map(&self) -> bool {
+        matches!(self, Resp::Map(_))
+    }
+
+    pub fn is_set(&self) -> bool {
+        matches!(self, Resp::Set(_))
+    }
+
+    pub fn is_push(&self) -> bool {
+        matches!(self, Resp::Push(_))
+    }
+
+    pub fn is_bulk_string_null(&self) -> bool {
+        matches!(self, Resp::BulkStringNull)
+    }
+
+    pub fn is_array_null(&self) -> bool {
+        matches!(self, Resp::ArrayNull)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        match self {
+            Resp::SimpleString(s) => s.is_empty(),
+            Resp::SimpleError(s) => s.is_empty(),
+            Resp::BulkString(bytes) => bytes.is_empty(),
+            Resp::BulkError(bytes) => bytes.is_empty(),
+            Resp::VerbatimString(bytes) => bytes.is_empty(),
+            Resp::Array(arr) => arr.is_empty(),
+            Resp::Map(m) => m.is_empty(),
+            Resp::Set(s) => s.is_empty(),
+            Resp::Push(p) => p.is_empty(),
+            _ => false,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct RespParser<'a> {
     data: &'a mut Cursor<BytesMut>,
@@ -109,9 +268,9 @@ impl<'a> RespParser<'a> {
     }
 
     pub fn check(&mut self) -> Result<Resp, ParseError> {
-        let curr_pos = self.data.position() as usize;
+        let start_pos = self.data.position();
         let res = self.parse();
-        self.data.set_position(curr_pos as u64);
+        self.data.set_position(start_pos);
         res
     }
 

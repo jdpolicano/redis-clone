@@ -1,20 +1,71 @@
 // Uncomment this block to pass the first stage
 use tokio::net::{ TcpListener };
+use std::sync::Mutex;
 use std::io;
+use std::env;
 use crate::database::{ Database };
-use crate::arguments::{ ServerArguments };
 use crate::listener::{ Listener };
 use crate::history::History;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ServerInfo {
+    inner: Mutex<ServerInfoInner>
+}
+
+impl ServerInfo {
+    pub fn new(master_host: Option<(String, String)>) -> Self {
+        let info = ServerInfoInner::new(master_host);
+        Self {
+            inner: Mutex::new(info)
+        }
+    }
+
+    pub fn master() -> Self {
+        Self::new(None)
+    }
+
+    pub fn replica(master_host: (String, String)) -> Self {
+        Self::new(Some(master_host))
+    }
+
+    pub fn get_role(&self) -> String {
+        self.inner.lock().unwrap().role.clone()
+    }
+
+    pub fn get_master_replid(&self) -> String {
+        self.inner.lock().unwrap().master_replid.clone()
+    }
+
+    pub fn get_master_repl_offset(&self) -> i64 {
+        self.inner.lock().unwrap().master_repl_offset.clone()
+    }
+
+    pub fn get_master_host(&self) -> Option<String> {
+        self.inner.lock().unwrap().master_host.clone()
+    }
+
+    pub fn is_replica(&self) -> bool {
+        if self.get_role() == "master" { false } else { true }
+    }
+
+    pub fn set_master_replid(&self, replid: String) {
+        self.inner.lock().unwrap().set_master_replid(replid);
+    }
+
+    pub fn set_master_repl_offset(&self, offset: i64) {
+        self.inner.lock().unwrap().set_master_repl_offset(offset);
+    }
+}
+
+#[derive(Debug)]
+pub struct ServerInfoInner {
     role: String,
     master_replid: String,
     master_repl_offset: i64,
     master_host: Option<String>,
 }
 
-impl ServerInfo {
+impl ServerInfoInner {
     pub fn new(master_host: Option<(String, String)>) -> Self {
         if master_host.is_some() {
             Self::replica(master_host.unwrap())
@@ -24,7 +75,7 @@ impl ServerInfo {
     }
 
     pub fn master() -> Self {
-        ServerInfo {
+        Self {
             role: "master".to_string(),
             // this will be generated eventually...
             master_replid: "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string(),
@@ -34,7 +85,7 @@ impl ServerInfo {
     }
 
     pub fn replica(master_host: (String, String)) -> Self {
-        ServerInfo {
+        Self {
             role: "slave".to_string(),
             master_replid: "?".to_string(),
             master_repl_offset: -1,
@@ -61,6 +112,14 @@ impl ServerInfo {
     pub fn is_replica(&self) -> bool {
         if self.role == "master" { false } else { true }
     }
+
+    pub fn set_master_replid(&mut self, replid: String) {
+        self.master_replid = replid;
+    }
+
+    pub fn set_master_repl_offset(&mut self, offset: i64) {
+        self.master_repl_offset = offset;
+    }
 }
 
 pub struct RedisServer {
@@ -82,52 +141,48 @@ impl RedisServer {
     }
 }
 
-// client resp is expected to be a an array of bulk strings...
-// pub fn client_resp_to_string(resp: Resp) -> io::Result<String> {
-//     match resp {
-//         Resp::SimpleString(s) => Ok(s),
-//         Resp::BulkString(b) => { 
-//             let s = String::from_utf8(b).map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "Err utf8 parse error"))?;
-//             Ok(s) 
-//         },
-//         _ => Err(io::Error::new(io::ErrorKind::InvalidInput, "Err utf8 parse error")),
-//     }
-// }
-
-// // helper method for 
-// pub async fn write_simple_error(stream: &mut TcpStream, msg: &str) -> io::Result<()> {
-//     let mut buf = BytesMut::new();
-//     RespEncoder::encode_simple_error(msg, &mut buf);
-//     stream.write_all(&buf).await?;
-//     Ok(())
-// }
-
-// pub async fn write_nil(stream: &mut TcpStream) -> io::Result<()> {
-//     let mut buf = BytesMut::new();
-//     RespEncoder::encode_array_null(&mut buf);
-//     stream.write_all(&buf).await?;
-//     Ok(())
-// }
-
-// pub async fn write_simple_string(stream: &mut TcpStream, msg: &str) -> io::Result<()> {
-//     let mut buf = BytesMut::new();
-//     RespEncoder::encode_simple_string(msg, &mut buf);
-//     stream.write_all(&buf).await?;
-//     Ok(())
-// }
-
-// pub async fn write_nil_bulk_string(stream: &mut TcpStream) -> io::Result<()> {
-//     let mut buf = BytesMut::new();
-//     RespEncoder::encode_bulk_string_null(&mut buf);
-//     stream.write_all(&buf).await?;
-//     Ok(())
-// }
-
-// pub async fn write_bulk_string_array(stream: &mut TcpStream, msgs: &[Resp]) -> io::Result<()> {
-//     let mut buf = BytesMut::new();
-//     RespEncoder::encode_array(msgs, &mut buf);
-//     stream.write_all(&buf).await?;
-//     Ok(())
-// }
-
+// These arguments do not require a name and do not conform to the general argument parser trait...
+pub struct ServerArguments {
+    pub host: String,
+    pub port: String,
+    pub replica_of: Option<(String, String)>,
+  }
+  
+  impl ServerArguments {
+      pub fn parse() -> ServerArguments {
+          let mut env = env::args();
+          let mut port = "6379".to_string();
+          let mut replica_of = None;
+  
+          env.next(); // skip executable path...
+  
+          while let Some(arg) = env.next() {
+              match arg.as_str() {
+                  "--port" => {
+                      if let Some(n) = env.next() {
+                          port = n;
+                      } else {
+                          println!("no port passed, defaulting to {}", port);
+                      }
+                  },
+  
+                  "--replicaof" => {
+                      if let Some(repl_host) = env.next() {
+                          if let Some(repl_port) = env.next() {
+                              replica_of = Some((repl_host, repl_port));
+                          }
+                      };
+                  }
+                  _ => println!("recevied unsupported arg {}", arg)
+              }
+          }
+          
+          // default to local host for now.
+          Self { host: "127.0.0.1".to_string(), port, replica_of }
+      }
+  
+      pub fn is_replica(&self) -> bool {
+          self.replica_of.is_some()
+      }
+  }
     

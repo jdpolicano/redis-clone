@@ -17,27 +17,23 @@ impl<'a> RedisClient<'a> {
 
     pub async fn ping(&mut self) -> io::Result<()> {
         let mut arguments = Vec::new();
-
         self.add_arg("PING", &mut arguments);
         let resp_arr = Resp::Array(arguments);
-
         self.stream.write_message(&resp_arr).await?;
-        let response = self.stream.read_message().await?;
-        self.assert_res_is_simple(response, "PONG")
+        Ok(())
     }
 
     pub async fn repl_conf(&mut self, args: &[&str]) -> io::Result<()> {
         let mut arguments = Vec::new();
-
         self.add_arg("REPLCONF", &mut arguments);
+
         for arg in args {
             self.add_arg(arg, &mut arguments);
         }
         
         let resp_arr = Resp::Array(arguments);
         self.stream.write_message(&resp_arr).await?;
-        let response = self.stream.read_message().await?;
-        self.assert_res_ok(response)
+        Ok(())
     }
 
     pub async fn psync(&mut self, args: &[&str]) -> io::Result<()> {
@@ -50,33 +46,20 @@ impl<'a> RedisClient<'a> {
         
         let resp_arr = Resp::Array(arguments);
         self.stream.write_message(&resp_arr).await?;
-        let message1 = self.stream.read_message().await?;
-        let message2 = self.stream.read_rdb().await;
         Ok(())
+    }
+
+    pub async fn read_message(&mut self) -> io::Result<Resp> {
+        let resp = self.stream.read_message().await?;
+        Ok(resp)
+    }
+
+    pub async fn read_rdb(&mut self) -> io::Result<Vec<u8>> {
+        let rdb = self.stream.read_rdb().await?;
+        Ok(rdb)
     }
 
     fn add_arg(&self, arg: &str, container: &mut Vec<Resp>) {
         container.push(Resp::BulkString(arg.as_bytes().to_vec()));
-    }
-    
-    fn assert_res_ok(&self, actual: Resp) -> io::Result<()> {
-        self.assert_res_is_simple(actual, "OK")
-    }
-
-    fn assert_res_is_simple(&self, actual: Resp, expected: &str) -> io::Result<()> {
-        let err = Err(io::Error::new(io::ErrorKind::InvalidInput, "Expected OK response"));
-
-        match actual {
-            Resp::SimpleString(s) => {
-                if s != expected {
-                    return err
-                }
-            },
-            _ => {
-                return err
-            }
-        }
-
-        Ok(())
     }
 }

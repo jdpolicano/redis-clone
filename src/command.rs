@@ -1,11 +1,8 @@
-use std::sync::Arc;
 use crate::resp::Resp;
 use crate::connection::Connection;
-use crate::database::Database;
-use crate::server::ServerInfo; 
-use crate::history::History;
-use crate::arguments::{ SetArguments, EchoArguments, GetArguments, ReplconfArguments };
-
+use crate::context::Handle;
+use crate::arguments::{ ArgumentParser, CommandArgument, EchoArguments, SetArguments, GetArguments };
+use crate::internals::{ ReplconfCommand };
 // Enum for transaction results, used to propogate certain actions upward to the context handler
 // i.e., if we performed a write operation the handler needs to send the info out to replicas
 // i.e., if we performed a replication, we need to store the connection in the history and break.
@@ -18,7 +15,7 @@ pub enum Transaction {
 
 // Command trait to represent any executable command.
 pub trait Command {
-    fn execute(self, stream: &mut Connection, database: Arc<Database>, info: Arc<ServerInfo>, history: Arc<History>) -> impl std::future::Future<Output = Transaction> + Send;
+    fn execute(self, stream: &mut Connection, handle: Handle) -> impl std::future::Future<Output = Transaction> + Send;
 }
 
 // List of commands
@@ -27,12 +24,10 @@ pub struct InfoCommand;
 pub struct EchoCommand(EchoArguments);
 pub struct SetCommand(SetArguments);
 pub struct GetCommand(GetArguments);
-pub struct ReplconfCommand(ReplconfArguments);
 pub struct PsyncCommand;
 
 // Enum for each type to ease parsing into commands.
 pub enum Cmd {
-    Unknown, // well formed command, unknown name
     Unexpected(String), // malformed command with err message...
     Ping(PingCommand),
     Echo(EchoCommand),
@@ -40,38 +35,36 @@ pub enum Cmd {
     Get(GetCommand),
     Info(InfoCommand),
     ReplConf(ReplconfCommand),
-    Psync(PsyncCommand),
 }
 
 impl Command for Cmd {
-    async fn execute(self, stream: &mut Connection, database: Arc<Database>, info: Arc<ServerInfo>, history: Arc<History>) -> Transaction {
+    async fn execute(self, stream: &mut Connection, handle: Handle) -> Transaction {
         match self {
-            Cmd::Ping(c) => c.execute(stream, database, info, history).await,
-            Cmd::Echo(c) => c.execute(stream, database, info, history).await,
-            Cmd::Set(c) => c.execute(stream, database, info, history).await,
-            Cmd::Get(c) => c.execute(stream, database, info, history).await,
-            Cmd::Info(c) => c.execute(stream, database, info, history).await,
-            Cmd::ReplConf(c) => c.execute(stream, database, info, history).await,
-            Cmd::Psync(c) => c.execute(stream, database, info, history).await,
+            Cmd::Ping(c) => c.execute(stream, handle).await,
+            Cmd::Echo(c) => c.execute(stream, handle).await,
+            Cmd::Set(c) => c.execute(stream, handle).await,
+            Cmd::Get(c) => c.execute(stream, handle).await,
+            Cmd::Info(c) => c.execute(stream, handle).await,
+            Cmd::ReplConf(c) => { c.execute(stream, handle).await },
             _ => Transaction::None
         }
     }
 }
 
 impl Command for PingCommand {
-    async fn execute(self, stream: &mut Connection, _database: Arc<Database>, _info: Arc<ServerInfo>, _history: Arc<History>) -> Transaction {
+    async fn execute(self, stream: &mut Connection, _handle: Handle) -> Transaction {
         let _ = stream.write_str("PONG").await;
         Transaction::None
     }
 }
 
 impl Command for InfoCommand {
-    async fn execute(self, stream: &mut Connection, _database: Arc<Database>, info: Arc<ServerInfo>, _history: Arc<History>) -> Transaction {
+    async fn execute(self, stream: &mut Connection, handle: Handle) -> Transaction {
         let payload = format!(
             "role:{}\r\nmaster_replid:{}\r\nmaster_repl_offset:{}", 
-            info.get_role(),
-            info.get_master_replid(),
-            info.get_master_repl_offset()
+            handle.info.get_role(),
+            handle.info.get_master_replid(),
+            handle.info.get_master_repl_offset()
         );
         let _ = stream.write_bytes(&payload.as_bytes()).await;
         Transaction::None
@@ -80,7 +73,7 @@ impl Command for InfoCommand {
 
 
 impl Command for EchoCommand {
-    async fn execute(self, stream: &mut Connection, _database: Arc<Database>, _info: Arc<ServerInfo>, _history: Arc<History>) -> Transaction {
+    async fn execute(self, stream: &mut Connection, _handle: Handle) -> Transaction {
         let _ = stream.write_message(&self.0.message).await;
         Transaction::None
     }
@@ -88,8 +81,9 @@ impl Command for EchoCommand {
 
 
 impl Command for SetCommand {
-    async fn execute(self, stream: &mut Connection, database: Arc<Database>, _info: Arc<ServerInfo>, _history: Arc<History>) -> Transaction {
+    async fn execute(self, stream: &mut Connection, handle: Handle) -> Transaction {
         let args = self.0;
+
         let key = args.key;
         let mut value = args.value;
         let expiration = args.expiration;
@@ -99,12 +93,12 @@ impl Command for SetCommand {
         }
 
         if args.nx {
-            if database.exists(&key) {
+            if handle.database.exists(&key) {
                 let _ = stream.write_message(&Resp::BulkStringNull).await;
                 return Transaction::None;
             }
         
-            database.set(key, value);
+            handle.database.set(key, value);
             // this is a conflict - cant get the previous key if we just set it.
             if args.get  {
                 let _ = stream.write_message(&Resp::BulkStringNull).await;
@@ -116,12 +110,12 @@ impl Command for SetCommand {
         }
 
         if args.xx {
-            if !database.exists(&key) {
+            if !handle.database.exists(&key) {
                 let _ = stream.write_message(&Resp::BulkStringNull).await;
                 return Transaction::None;
             }
 
-            let prev = database.set(key, value);
+            let prev = handle.database.set(key, value);
 
             if args.get {
                 if let Some(prev) = prev {
@@ -139,7 +133,7 @@ impl Command for SetCommand {
         }
 
         // if we get here, we're just setting the key
-        let prev = database.set(key, value);
+        let prev = handle.database.set(key, value);
 
         if args.get {
             if let Some(value) = prev {
@@ -156,21 +150,21 @@ impl Command for SetCommand {
 }
 
 impl Command for GetCommand {
-    async fn execute(self, stream: &mut Connection, database: Arc<Database>, _info: Arc<ServerInfo>, _history: Arc<History>) -> Transaction {
+    async fn execute(self, stream: &mut Connection, handle: Handle) -> Transaction {
         let key = self.0.key;
-        let value = database.get(&key);
+        let value = handle.database.get(&key);
 
         if value.is_none() {
             let _ = stream.write_message(&Resp::BulkStringNull).await;
-            return Transaction::Read;
+            return Transaction::None;
         }
 
         let payload = value.unwrap();
 
         if payload.has_expired() {
-            database.del(&key);
+            handle.database.del(&key);
             let _ = stream.write_message(&Resp::BulkStringNull).await;
-            return Transaction::Read;
+            return Transaction::Write;
         }
 
         let _ = stream.write_bytes(&payload.data).await;
@@ -178,17 +172,11 @@ impl Command for GetCommand {
     }
 }
 
-impl Command for ReplconfCommand {
-    async fn execute(self, stream: &mut Connection, _database: Arc<Database>, _info: Arc<ServerInfo>, _history: Arc<History>) -> Transaction {
-        let _ = stream.write_str("OK").await;
-        Transaction::None
-    }
-}
 
 impl Command for PsyncCommand {
-    async fn execute(self, stream: &mut Connection, _database: Arc<Database>, info: Arc<ServerInfo>, _history: Arc<History>) -> Transaction {
-        let repl_id = info.get_master_replid();
-        let repl_offset = info.get_master_repl_offset();
+    async fn execute(self, stream: &mut Connection, handle: Handle) -> Transaction {
+        let repl_id = handle.info.get_master_replid();
+        let repl_offset = handle.info.get_master_repl_offset();
         let payload = format!("FULLRESYNC {} {}", repl_id, repl_offset);
 
         let _ = stream.write_bytes(payload.as_bytes()).await;
@@ -208,80 +196,47 @@ impl CmdParser {
     pub fn parse(input: Resp) -> Cmd {
         match input {
             Resp::Array(args) => {
-                if args.len() < 1 {
-                    return Cmd::Unknown
-                }
-
-                let mut args_iter = args.into_iter();
-                let cmd_name = Self::resp_to_string(args_iter.next());
-
-                if let Some(name) = cmd_name {
-                    return Self::route_cmd(name, args_iter)
-                } else {
-                    return Cmd::Unexpected("malformed command name".to_string())
-                }
+                let args_iter = args.into_iter();
+                return Self::route_cmd(args_iter);
             },
 
             _ => return Cmd::Unexpected("expected array of args".to_string())
         }
     }
 
-    fn route_cmd(name: String, args: std::vec::IntoIter<Resp>) -> Cmd {
-        match name.to_uppercase().as_str() {
-            "PING" => { 
-                return Cmd::Ping(PingCommand) 
+    fn route_cmd(args: std::vec::IntoIter<Resp>) -> Cmd {
+        let command_arg = ArgumentParser::get_from(args);
+
+        if command_arg.is_err() {
+            return Cmd::Unexpected(command_arg.unwrap_err());
+        }
+
+        match command_arg.unwrap() {
+            CommandArgument::Ping => { 
+                Cmd::Ping(PingCommand) 
             },
 
-            "INFO" => {
-                return Cmd::Info(InfoCommand)
+            CommandArgument::Info => {
+                Cmd::Info(InfoCommand)
+            },
+
+            CommandArgument::Echo(echo_args) => {
+                Cmd::Echo(EchoCommand(echo_args))
+            },
+
+            CommandArgument::Get(_get_args) => {
+                Cmd::Get(GetCommand(_get_args))
+            },
+
+            CommandArgument::Set(_set_args) => {
+                Cmd::Set(SetCommand(_set_args))
+            },
+
+            CommandArgument::Replconf(replconf_args) => {
+                Cmd::ReplConf(ReplconfCommand(replconf_args))
             }
 
-            "ECHO" => {
-                let cmd_args = EchoArguments::parse(args);
-                if let Err(e) = cmd_args {
-                    return Cmd::Unexpected(e);
-                }
-                return Cmd::Echo(EchoCommand(cmd_args.unwrap()));
-            }
-
-            "GET" => {
-                let cmd_args = GetArguments::parse(args);
-                if let Err(e) = cmd_args {
-                    return Cmd::Unexpected(e);
-                }
-                return Cmd::Get(GetCommand(cmd_args.unwrap()));
-            }
-
-            "SET" => {
-                let cmd_args = SetArguments::parse(args);
-                if let Err(e) = cmd_args {
-                    return Cmd::Unexpected(e);
-                }
-                return Cmd::Set(SetCommand(cmd_args.unwrap()));
-            }
-
-            "REPLCONF" => {
-                let cmd_args = ReplconfArguments::parse(args);
-                if let Err(e) = cmd_args {
-                    return Cmd::Unexpected(e);
-                }
-                return Cmd::ReplConf(ReplconfCommand(cmd_args.unwrap()));
-            }
-
-            "PSYNC" => {
-                return Cmd::Psync(PsyncCommand);
-            }
-
-            _ => Cmd::Unknown
-        }
-    }
-
-
-    fn resp_to_string(input: Option<Resp>) -> Option<String> {
-        match input {
-            Some(Resp::SimpleString(s)) => Some(s),
-            Some(Resp::BulkString(bytes)) => { String::from_utf8(bytes).ok() },
-            _ => None
+            _ => Cmd::Unexpected("unknown or unexpected command".to_string())
         }
     }
 }

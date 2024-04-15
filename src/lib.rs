@@ -8,3 +8,5 @@ pub mod client;
 pub mod connection;
 pub mod listener;
 pub mod history;
+pub mod protocol;
+pub mod internals;

@@ -1,7 +1,6 @@
 // Uncomment this block to pass the first stage
 use std::io::{ self };
-use redis_starter_rust::server::{ RedisServer };
-use redis_starter_rust::arguments::{ ServerArguments };
+use redis_starter_rust::server::{ RedisServer, ServerArguments };
 
 #[tokio::main]
 async fn main() -> io::Result<()> {

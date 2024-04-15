@@ -6,6 +6,13 @@ use crate::history::History;
 use crate::server::ServerInfo;
 use crate::command::{CmdParser, Cmd, Command, Transaction};
 
+// this is a handler that can be passed around to simplify function signatures etc...
+pub struct Handle {
+    pub database: Arc<Database>,
+    pub history: Arc<History>,
+    pub info: Arc<ServerInfo>
+}
+
 // The state of the request response cycle for each client request...
 pub struct Context {
     pub stream: Connection, // the currently connected client.
@@ -24,32 +31,41 @@ impl Context {
         }
     }
 
-    pub async fn handle(mut self) -> io::Result<()> {
+    // handle all commands with unlimited functionality.
+    pub async fn handle_all(mut self) -> io::Result<()> {
         loop {
             let message = self.stream.read_message().await?;
             let cmd = CmdParser::parse(message.clone());
     
             match cmd {
-                Cmd::Unknown => {
-                    self.stream.write_err("ERR unknown command name").await?;
-                }
-    
                 Cmd::Unexpected(err_msg) => {
                     self.stream.write_err(&format!("ERR {}", err_msg)).await?;
                 }
     
                 valid_cmd => {
-                    let transaction = valid_cmd.execute(&mut self.stream, self.database.clone(), self.info.clone(), self.history.clone()).await;
+                    let handle = Handle {
+                        database: self.database.clone(),
+                        history: self.history.clone(),
+                        info: self.info.clone()
+                    };
+
+                    if self.info.is_replica() {
+                        self.stream.close_write(); // close the write end of the stream. no need to send back messages right now.
+                    }
+                    
+                    let transaction = valid_cmd.execute(
+                        &mut self.stream, 
+                        handle
+                    ).await;
 
                     match transaction {
                         Transaction::Replicate if !self.info.is_replica() => {
                             // preserver this connection and move on.
                             self.history.add_replica(self.stream).await;
-                            break;
+                            break Ok(());
                         }
 
                         Transaction::Write if !self.info.is_replica() => {
-                            println!("writing to replicas from master...");
                             self.history.add_write(message).await;
                         }
 
@@ -60,7 +76,34 @@ impl Context {
                 }
             }
         }
+    }
+    
+    // only handle a limited command set for this client. 
+    // this is used so the replica can receive and respond to certain commands without actually executing them.
+    // i.e., you can get info on the replica, but only the connection to the master will allow write commands.
+    pub async fn handle_limited(mut self) -> io::Result<()> {
+        let message = self.stream.read_message().await?;
+        let cmd = CmdParser::parse(message.clone());
+        match cmd {
+            Cmd::Info(c) => {
+                let handle = Handle {
+                    database: self.database.clone(),
+                    history: self.history.clone(),
+                    info: self.info.clone()
+                };
 
-        Ok(())
+                c.execute(
+                    &mut self.stream, 
+                    handle
+                ).await;
+
+                return Ok(());
+            },
+
+            _ => {
+                self.stream.write_err("ERR direct messaging to replica not allowed").await?;
+                return Ok(());
+            }
+        }
     }
 }

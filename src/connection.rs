@@ -198,6 +198,7 @@ impl Connection {
             // if the stream has a token to read, we shouldn't try reading more for now.
             Ok(_) => Ok(false),
             Err(e) => {
+                println!("error: {:?}", e);
                 match e {
                     // if the stream is just incomplete, we should try reading more.
                     ParseError::UnexpectedEndOfInput => Ok(true),

@@ -3,12 +3,13 @@ use std::io;
 use std::time;
 use std::thread;
 use std::sync::Arc;
-use crate::context::Context;
+use crate::context::{Context, Handle};
 use crate::history::History;
 use crate::connection::Connection;
 use crate::database::Database;
 use crate::server::ServerInfo;
 use crate::client::RedisClient;
+use crate::protocol::ReplicationProtocol;
 
 #[derive(Debug)]
 pub struct Listener {
@@ -39,12 +40,17 @@ impl Listener {
             // if it is, we need to connect to the master server and start listening for updates.
             // this will be implemented later.
             self.replicate_before_listen().await?;
-        }
+            loop {
+                let stream = self.accept().await?; 
+                let connection = Connection::new(stream);
+                self.listen_limited(connection);
+            }
+        } 
 
         loop {
             let stream = self.accept().await?; 
             let connection = Connection::new(stream);
-            self.listen(connection);
+            self.listen_all(connection);
         }
     }
 
@@ -62,7 +68,8 @@ impl Listener {
         }
     }
 
-    fn listen(&self, stream: Connection) {
+    // listen to connections with unlimited functionality.
+    fn listen_all(&self, stream: Connection) {
         let ctx = Context::new(
             stream, 
             self.db.clone(), 
@@ -71,7 +78,20 @@ impl Listener {
         );
         
         tokio::spawn(async move {
-            ctx.handle().await
+            ctx.handle_all().await
+        });
+    }
+
+    fn listen_limited(&self, stream: Connection) {
+        let ctx = Context::new(
+            stream, 
+            self.db.clone(), 
+            self.history.clone(), 
+            self.info.clone()
+        );
+        
+        tokio::spawn(async move {
+            ctx.handle_limited().await
         });
     }
 
@@ -79,25 +99,28 @@ impl Listener {
         println!("begin negotiation...");
         let tcp_socket = TcpStream::connect(self.info.get_master_host().unwrap()).await?;
         let mut stream = Connection::new(tcp_socket);
-        let mut client = RedisClient::from_stream(&mut stream);
-
+        let client = RedisClient::from_stream(&mut stream);
         let listening_port = self.listener
             .local_addr()?
             .port()
             .to_string();
+        
+        let handle = Handle {
+            database: self.db.clone(),
+            history: self.history.clone(),
+            info: self.info.clone()
+        };
 
-        client.ping().await?;
-        client.repl_conf(&["listening-port", &listening_port]).await?;
-        client.repl_conf(&["capa", "psync2"]).await?;
+        let mut protocol = ReplicationProtocol::new(
+            client,
+            listening_port,
+            handle
+        );
 
-        let master_replid = self.info.get_master_replid();
-        let master_repl_offset = self.info.get_master_repl_offset().to_string();
+        protocol.start().await?;
 
-        client.psync(&[&master_replid, &master_repl_offset]).await?;
-
-        // finally spawn the thread that will continue listening for commands from the original master...
         println!("begin listening...");
-        self.listen(stream);
+        self.listen_all(stream);
 
         Ok(())
     }

@@ -2,17 +2,33 @@ use crate::resp::Resp;
 use crate::database::Record;
 use std::time::Duration;
 use std::vec::IntoIter;
-use std::env;
+use crate::internals::{ReplconfArguments, PsyncArguments};
 
+#[derive(Debug)]
+pub enum CommandArgument {
+    Ping,
+    Info,
+    Echo(EchoArguments),
+    Get(GetArguments),
+    Set(SetArguments),
+    Replconf(ReplconfArguments),
+    Psync(PsyncArguments),
+}
+
+// a trait defining an argument parser for a command
+pub trait Argument {
+    fn parse(args: IntoIter<Resp>) -> Result<Self, String>
+    where
+        Self: Sized;
+}
 
 #[derive(Debug)]
 pub struct EchoArguments {
     pub message: Resp,
 }
 
-impl EchoArguments {
-    pub fn parse(mut args: IntoIter<Resp>) -> Result<EchoArguments, String> {
-        // Since we check that there is exactly one argument, we can safely pop it
+impl Argument for EchoArguments {
+    fn parse(mut args: IntoIter<Resp>) -> Result<EchoArguments, String> {
         let message = match args.next() {
             Some(resp) => resp,
             _ => return Err("ERR wrong number of arguments for 'echo' command".to_string())
@@ -32,8 +48,8 @@ pub struct GetArguments {
     pub key: Vec<u8>,
 }
 
-impl GetArguments {
-    pub fn parse(mut args: IntoIter<Resp>) -> Result<GetArguments, String> {
+impl Argument for GetArguments {
+    fn parse(mut args: IntoIter<Resp>) -> Result<GetArguments, String> {
         // Since we check that there is exactly one argument, we can safely pop it
         let key = match args.next() {
             Some(Resp::BulkString(b)) => b,
@@ -70,9 +86,8 @@ impl Expiration {
     }
 }
 
-impl SetArguments {
-    pub fn parse(mut args: IntoIter<Resp>) -> Result<SetArguments, String> {
- 
+impl Argument for SetArguments {
+    fn parse(mut args: IntoIter<Resp>) -> Result<SetArguments, String> {
         let key = match args.next() {
             Some(Resp::BulkString(b)) => b,
             _ => return Err("ERR key must be a bulk string".to_string()),
@@ -87,7 +102,6 @@ impl SetArguments {
         let mut xx = false;
         let mut get = false;
         let mut expiration = None;
-
 
         while let Some(arg) = args.next() {
             match arg {
@@ -132,90 +146,30 @@ impl SetArguments {
     }
 }
 
-pub struct ReplconfArguments {
-    pub listening_port: Option<String>,
-    pub capa: Option<String>,
-}
+pub struct ArgumentParser;
 
-impl ReplconfArguments {
-    pub fn parse(mut args: IntoIter<Resp>) -> Result<ReplconfArguments, String> {
-        let mut listening_port = None;
-        let mut capa = None;
+impl ArgumentParser {
+    pub fn get_from(mut args: IntoIter<Resp>) -> Result<CommandArgument, String> 
+    {
+        match args.next() {
+            Some(resp) => {
+                let name: String = resp
+                    .try_into()
+                    .map_err(|_| "ERR unknown or unexpected command".to_string())?;
 
-        while let Some(arg) = args.next() {
-            match arg {
-                Resp::BulkString(bs) => {
-                    let as_str = String::from_utf8(bs)
-                        .map_err(|_| "ERR argument not utf8")?;
-
-                    match &as_str.to_uppercase()[..] {
-                        "LISTENING-PORT" => {
-                            if let Some(Resp::BulkString(next_arg)) = args.next() {
-                                listening_port = Some(String::from_utf8(next_arg)
-                                    .map_err(|_| "ERR invalid port format")?);
-                            } else {
-                                return Err("ERR expected port after 'LISTENING-PORT'".to_string());
-                            }
-                        },
-                        "CAPA" => {
-                            if let Some(Resp::BulkString(next_arg)) = args.next() {
-                                capa = Some(String::from_utf8(next_arg)
-                                    .map_err(|_| "ERR invalid capability format")?);
-                            } else {
-                                return Err("ERR expected capability after 'CAPA'".to_string());
-                            }
-                        },
-                        _ => return Err("ERR unknown or unexpected argument".to_string()),
-                    }
-                },
-                _ => return Err("ERR arguments must be bulk strings".to_string()),
-            }
-        }
-
-        Ok(ReplconfArguments { listening_port, capa })
-    }
-}
-
-pub struct ServerArguments {
-  pub host: String,
-  pub port: String,
-  pub replica_of: Option<(String, String)>,
-}
-
-impl ServerArguments {
-    pub fn parse() -> ServerArguments {
-        let mut env = env::args();
-        let mut port = "6379".to_string();
-        let mut replica_of = None;
-
-        env.next(); // skip executable path...
-
-        while let Some(arg) = env.next() {
-            match arg.as_str() {
-                "--port" => {
-                    if let Some(n) = env.next() {
-                        port = n;
-                    } else {
-                        println!("no port passed, defaulting to {}", port);
-                    }
-                },
-
-                "--replicaof" => {
-                    if let Some(repl_host) = env.next() {
-                        if let Some(repl_port) = env.next() {
-                            replica_of = Some((repl_host, repl_port));
-                        }
-                    };
+                match name.to_uppercase().as_str() {
+                    "PING" => Ok(CommandArgument::Ping),
+                    "INFO" => Ok(CommandArgument::Info),
+                    "GET" => Ok(CommandArgument::Get(GetArguments::parse(args)?)),
+                    "SET" => Ok(CommandArgument::Set(SetArguments::parse(args)?)),
+                    "ECHO" => Ok(CommandArgument::Echo(EchoArguments::parse(args)?)),
+                    "REPLCONF" => Ok(CommandArgument::Replconf(ReplconfArguments::parse(args)?)),
+                    "PSYNC" => Ok(CommandArgument::Psync(PsyncArguments::parse(args)?)),
+                    _ => Err("ERR unknown or unexpected command".to_string())
                 }
-                _ => println!("recevied unsupported arg {}", arg)
             }
+            _ => Err("Empty arguments".to_string())
         }
-        
-        // default to local host for now.
-        Self { host: "127.0.0.1".to_string(), port, replica_of }
-    }
-
-    pub fn is_replica(&self) -> bool {
-        self.replica_of.is_some()
+    
     }
 }
