@@ -72,6 +72,16 @@ impl Connection {
         Ok((res, self.read_buf.position() - start_pos))
     }
 
+    pub async fn read_rdb(&mut self) -> Result<Vec<u8>, Error> {
+        self.ensure_readable()?;
+
+        while !self.is_complete_rdb()? {
+            self.fill_buffer().await?;
+        }
+
+        self.parse_rdb()
+    }
+
     async fn fill_buffer(&mut self) -> Result<(), Error> {
         let nbytes = self.stream.read_buf(&mut self.read_buf.get_mut()).await?;
         if nbytes == 0 {
@@ -99,14 +109,29 @@ impl Connection {
         }
     }
 
+    fn is_complete_rdb(&mut self) -> Result<bool, Error> {
+        match self.try_parse_rdb() {
+            Ok(_) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    }
+
     // TEMPORARY UNTIL WE ADD BONEFIDE RDB PARSING
-    pub async fn read_rdb(&mut self) -> Result<Vec<u8>, Error> {
-        let _ = next_byte(&mut self.read_buf)?;
+    fn parse_rdb(&mut self) -> Result<Vec<u8>, Error> {
+        let first = next_byte(&mut self.read_buf)?;
         let len_bytes = parse_until_crlf(&mut self.read_buf)?;
         let len_str = std::str::from_utf8(&len_bytes).map_err(|_| Error::ParseError(ParseError::InvalidByte))?;
         let len = len_str.parse::<usize>().map_err(|_| Error::ParseError(ParseError::InvalidByte))?;
         let data = parse_n_bytes(&mut self.read_buf, len)?;
         Ok(data)
+    }
+
+    // TEMPORARY UNTIL WE ADD BONEFIDE RDB PARSING
+    fn try_parse_rdb(&mut self) -> Result<(), Error> {
+        let start_pos = self.read_buf.position(); // get the current position.
+        let _ = self.parse_rdb()?;
+        self.read_buf.set_position(start_pos); // set it back
+        Ok(())
     }
 
     // takes a resp encoded value and writes it to the buffer...
