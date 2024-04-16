@@ -6,6 +6,7 @@ use crate::internals::{ ReplconfCommand };
 // Enum for transaction results, used to propogate certain actions upward to the context handler
 // i.e., if we performed a write operation the handler needs to send the info out to replicas
 // i.e., if we performed a replication, we need to store the connection in the history and break.
+#[derive(Debug)]
 pub enum Transaction {
     Write,
     Replicate,

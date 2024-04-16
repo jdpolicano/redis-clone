@@ -57,55 +57,48 @@ impl Connection {
         }
     }
 
-    pub async fn read_message(&mut self) -> Result<Resp, Error> {
-        if !self.readable { return Err(Error::NotReadable) }
+    // returns the resp decoded value and a number indication how large the original
+    // message was.
+    pub async fn read_message(&mut self) -> Result<(Resp, u64), Error> {
+        self.ensure_readable()?;
 
-        if !self.should_read().await? {
-            let mut parser = RespParser::new(&mut self.read_buf);
-            return parser
-                .parse()
-                .map_err(|e| Error::ParseError(e));
+        while !self.is_complete_message()? {
+            self.fill_buffer().await?;
         }
 
-        loop {
-            // is it guaranteed we didn't write into the buffer at this point?
-            let nbytes = self.stream.read_buf(&mut self.read_buf.get_mut()).await?;
-            
-            if nbytes == 0 {
-                self.read_buf.get_mut().clear();
-                self.read_buf.set_position(0);
-                return Err(Error::ConnectionClosed)
-            }
-            
-            let mut parser = RespParser::new(&mut self.read_buf);
+        let start_pos = self.read_buf.position();
+        let mut parser = RespParser::new(&mut self.read_buf);
+        let res = parser.parse().map_err(Error::ParseError)?;
+        Ok((res, self.read_buf.position() - start_pos))
+    }
 
-            match parser.check() {
-                Ok(_) => {
-                    let resp = parser.parse().unwrap(); // we already know this will work...
+    async fn fill_buffer(&mut self) -> Result<(), Error> {
+        let nbytes = self.stream.read_buf(&mut self.read_buf.get_mut()).await?;
+        if nbytes == 0 {
+            self.read_buf.get_mut().clear();
+            self.read_buf.set_position(0);
+            return Err(Error::ConnectionClosed);
+        }
+        Ok(())
+    }
 
-                    if self.read_buf.remaining() == 0 {
-                        self.read_buf.get_mut().clear();
-                        self.read_buf.set_position(0);
-                    }
-
-                    return Ok(resp)
-                },
-                Err(e) => {
-                    println!("error: {:?}", e);
-                    match e {
-                        ParseError::UnexpectedEndOfInput => {
-                            continue;
-                        },
-                        
-                        e => {
-                            self.write_err("ERR RESP Protocol Error").await?;
-                            return Err(Error::ParseError(e))
-                        }
-                    }
-                }
-            }
+    fn ensure_readable(&self) -> Result<(), Error> {
+        if !self.readable {
+            Err(Error::NotReadable)
+        } else {
+            Ok(())
         }
     }
+
+    fn is_complete_message(&mut self) -> Result<bool, Error> {
+        let mut parser = RespParser::new(&mut self.read_buf);
+        match parser.check() {
+            Ok(_) => Ok(true),
+            Err(ParseError::UnexpectedEndOfInput) => Ok(false),
+            Err(e) => Err(Error::ParseError(e)),
+        }
+    }
+
     // TEMPORARY UNTIL WE ADD BONEFIDE RDB PARSING
     pub async fn read_rdb(&mut self) -> Result<Vec<u8>, Error> {
         let _ = next_byte(&mut self.read_buf)?;
@@ -183,34 +176,6 @@ impl Connection {
 
     pub fn borrow_stream(&mut self) -> &mut TcpStream {
         &mut self.stream
-    }
-
-    async fn should_read(&mut self) -> Result<bool, Error> {
-        // if there is no new data to read, then we should
-        // attempt a read operation.
-        if !self.read_buf.has_remaining() {
-            return Ok(true)
-        }
-
-        let mut parser = RespParser::new(&mut self.read_buf);
-
-        match parser.check() {
-            // if the stream has a token to read, we shouldn't try reading more for now.
-            Ok(_) => Ok(false),
-            Err(e) => {
-                println!("error: {:?}", e);
-                match e {
-                    // if the stream is just incomplete, we should try reading more.
-                    ParseError::UnexpectedEndOfInput => Ok(true),
-
-                    // if the stream is invalid, we should write an error and return it.
-                    _ => {
-                        self.write_err("ERR RESP Protocol Error").await?;
-                        return Err(Error::ParseError(e))
-                    }
-                }
-            }
-        }
     }
 }
 

@@ -55,6 +55,10 @@ impl ServerInfo {
     pub fn set_master_repl_offset(&self, offset: i64) {
         self.inner.lock().unwrap().set_master_repl_offset(offset);
     }
+
+    pub fn incr_master_repl_offset(&self, offset: i64) {
+        self.inner.lock().unwrap().incr_master_repl_offset(offset);
+    }
 }
 
 #[derive(Debug)]
@@ -119,6 +123,10 @@ impl ServerInfoInner {
 
     pub fn set_master_repl_offset(&mut self, offset: i64) {
         self.master_repl_offset = offset;
+    }
+
+    pub fn incr_master_repl_offset(&mut self, offset: i64) {
+        self.master_repl_offset += offset;
     }
 }
 

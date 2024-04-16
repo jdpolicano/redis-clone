@@ -164,18 +164,8 @@ impl<'a> ReplicationProtocol<'a> {
     pub async fn expect_full_resync(&mut self) -> ReplicationEvents {
         let resp = self.client.read_message().await;
         match resp {
-            Ok(Resp::BulkString(s)) => {
-                let parsed_str = std::str::from_utf8(&s);
-
-                if parsed_str.is_err() {
-                    return ReplicationEvents::ProtocolError("ERR full resync string is not valid utf8");
-                }
-
-                let parsed_str = parsed_str.unwrap();
-
-                let parts: Vec<&str> = parsed_str
-                    .split(" ")
-                    .collect();
+            Ok(Resp::SimpleString(s)) => {
+                let parts: Vec<&str> = s.split(" ").collect();
 
                 if parts.len() == 3 && parts[0] == "FULLRESYNC" {
                     self.handle.info.set_master_replid(parts[1].to_string());
@@ -283,7 +273,7 @@ impl<'a> ReplServerProtocol<'a> {
                     let replid = self.handle.info.get_master_replid();
                     let offset = self.handle.info.get_master_repl_offset().to_string();
                     let payload = format!("FULLRESYNC {} {}", replid, offset);
-                    self.stream.write_bytes(&payload.as_bytes()).await?;
+                    self.stream.write_str(&payload).await?;
                     self.handle_event(ReplServerEvents::SentResponse);  
                 },
 
@@ -324,7 +314,7 @@ impl<'a> ReplServerProtocol<'a> {
     }
 
     async fn expect_capabilities(&mut self) -> io::Result<ReplServerEvents> {
-        let message = self.stream.read_message().await?;
+        let (message, _) = self.stream.read_message().await?;
 
         if let Some(args) = message.as_vec() {
             let parsed_args = self.get_command_arg(args)?;
@@ -341,7 +331,7 @@ impl<'a> ReplServerProtocol<'a> {
     }
 
     async fn expect_psync(&mut self) -> io::Result<ReplServerEvents> {
-        let message = self.stream.read_message().await?;
+        let (message, _) = self.stream.read_message().await?;
 
         if let Some(arr) = message.as_vec() {
             let parsed_args = self.get_command_arg(arr)?;

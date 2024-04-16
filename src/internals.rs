@@ -4,6 +4,7 @@ use crate::arguments::Argument;
 use crate::protocol::ReplServerProtocol;
 use crate::context::Handle;
 use crate::connection::Connection;
+use crate::client::RedisClient;
 use std::vec::IntoIter;
 
 pub struct ReplconfCommand(pub ReplconfArguments);
@@ -18,6 +19,16 @@ impl Command for ReplconfCommand {
                 return Transaction::Replicate;
             },
 
+            ReplconfArguments::GetAck(_ack) => {
+                let mut client = RedisClient::from_stream(stream);
+                let offset = handle.info
+                    .get_master_repl_offset()
+                    .to_string();
+
+                let _ = client.repl_conf(&["ACK", &offset]).await;
+                return Transaction::None;
+            },
+
             _ => {
                 let _ = stream.write_err("ERR unsupported protocol sequence").await;
                 return Transaction::None;
@@ -30,6 +41,7 @@ impl Command for ReplconfCommand {
 pub enum ReplconfArguments {
     ListeningPort(String),
     Capa(String),
+    GetAck(String),
 }
 
 impl Argument for ReplconfArguments {
@@ -49,6 +61,11 @@ impl Argument for ReplconfArguments {
 
                     "CAPA" => {
                         let outcome = ReplconfArguments::Capa(try_string(&mut args)?);
+                        return check_remaining(outcome, &mut args);
+                    },
+
+                    "GETACK" => {
+                        let outcome = ReplconfArguments::GetAck(try_string(&mut args)?);
                         return check_remaining(outcome, &mut args);
                     },
 

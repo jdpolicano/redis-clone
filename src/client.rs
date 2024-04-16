@@ -50,7 +50,7 @@ impl<'a> RedisClient<'a> {
     }
 
     pub async fn read_message(&mut self) -> io::Result<Resp> {
-        let resp = self.stream.read_message().await?;
+        let (resp, _) = self.stream.read_message().await?;
         Ok(resp)
     }
 

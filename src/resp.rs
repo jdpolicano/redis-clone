@@ -677,7 +677,7 @@ mod tests {
     #[test]
     fn test_parse_simple_string() {
         let data = BytesMut::from(&b"+hello\r\n"[..]);
-        let mut cursor = Cursor::new(&data);
+        let mut cursor = Cursor::new(data);
         let mut parser = RespParser::new(&mut cursor);
         let result = parser.parse().unwrap();
         assert_eq!(result, Resp::SimpleString("hello".to_string()));
@@ -686,7 +686,7 @@ mod tests {
     #[test]
     fn test_parse_simple_error() {
         let data = BytesMut::from(&b"-Error message\r\n"[..]);
-        let mut cursor = Cursor::new(&data);
+        let mut cursor = Cursor::new(data);
         let mut parser = RespParser::new(&mut cursor);
         let result = parser.parse().unwrap();
         assert_eq!(result, Resp::SimpleError("Error message".to_string()));
@@ -695,13 +695,13 @@ mod tests {
     #[test]
     fn test_parse_integer() {
         let data = BytesMut::from(&b":123\r\n"[..]);
-        let mut cursor = Cursor::new(&data);
+        let mut cursor = Cursor::new(data);
         let mut parser = RespParser::new(&mut cursor);
         let result = parser.parse().unwrap();
         assert_eq!(result, Resp::Integer(123));
 
         let data = BytesMut::from(&b":-123\r\n"[..]);
-        let mut cursor = Cursor::new(&data);
+        let mut cursor = Cursor::new(data);
         let mut parser = RespParser::new(&mut cursor);
         let result = parser.parse().unwrap();
         assert_eq!(result, Resp::Integer(-123));
@@ -710,7 +710,7 @@ mod tests {
     #[test]
     fn test_parse_bulk_string_null() {
         let data = BytesMut::from(&b"$-1\r\n"[..]);
-        let mut cursor = Cursor::new(&data);
+        let mut cursor = Cursor::new(data);
         let mut parser = RespParser::new(&mut cursor);
         let result = parser.parse().unwrap();
         assert_eq!(result, Resp::BulkStringNull);
@@ -719,7 +719,7 @@ mod tests {
     #[test]
     fn test_parse_bulk_string() {
         let data = BytesMut::from(&b"$5\r\nhello\r\n"[..]);
-        let mut cursor = Cursor::new(&data);
+        let mut cursor = Cursor::new(data);
         let mut parser = RespParser::new(&mut cursor);
         let result = parser.parse().unwrap();
         assert_eq!(result, Resp::BulkString(b"hello".to_vec()));
@@ -728,7 +728,7 @@ mod tests {
     #[test]
     fn test_parse_bulk_string_empty() {
         let data = BytesMut::from(&b"$0\r\n\r\n"[..]);
-        let mut cursor = Cursor::new(&data);
+        let mut cursor = Cursor::new(data);
         let mut parser = RespParser::new(&mut cursor);
         let result = parser.parse().unwrap();
         assert_eq!(result, Resp::BulkString(b"".to_vec()));
@@ -737,7 +737,7 @@ mod tests {
     #[test]
     fn test_parse_array() {
         let data = BytesMut::from(&b"*2\r\n$5\r\nhello\r\n$5\r\nworld\r\n"[..]);
-        let mut cursor = Cursor::new(&data);
+        let mut cursor = Cursor::new(data);
         let mut parser = RespParser::new(&mut cursor); 
         let result = parser.parse().unwrap();
         assert_eq!(result, Resp::Array(vec![Resp::BulkString(b"hello".to_vec()), Resp::BulkString(b"world".to_vec())]));
@@ -746,7 +746,7 @@ mod tests {
     #[test]
     fn test_parse_array_2() {
         let data = BytesMut::from(&b"*5\r\n:1\r\n:2\r\n:3\r\n:4\r\n$5\r\nhello\r\n"[..]);
-        let mut cursor = Cursor::new(&data);
+        let mut cursor = Cursor::new(data);
         let mut parser = RespParser::new(&mut cursor);
         let result = parser.parse().unwrap();
         assert_eq!(result, Resp::Array(
@@ -763,7 +763,7 @@ mod tests {
     #[test]
     fn test_parse_array_nested() {
         let data = BytesMut::from(&b"*2\r\n*3\r\n:1\r\n:2\r\n:3\r\n*2\r\n+Hello\r\n-World\r\n"[..]);
-        let mut cursor = Cursor::new(&data);
+        let mut cursor = Cursor::new(data);
         let mut parser = RespParser::new(&mut cursor);
         let result = parser.parse().unwrap();
         assert_eq!(result, Resp::Array(
@@ -789,7 +789,7 @@ mod tests {
     #[test]
     fn test_parse_array_empty() {
         let data = BytesMut::from(&b"*0\r\n"[..]);
-        let mut cursor = Cursor::new(&data);
+        let mut cursor = Cursor::new(data);
         let mut parser = RespParser::new(&mut cursor);
         let result = parser.parse().unwrap();
         assert_eq!(result, Resp::Array(vec![]));
@@ -798,7 +798,7 @@ mod tests {
     #[test]
     fn test_parse_array_null() {
         let data = BytesMut::from(&b"*-1\r\n"[..]);
-        let mut cursor = Cursor::new(&data);
+        let mut cursor = Cursor::new(data);
         let mut parser = RespParser::new(&mut cursor);
         let result = parser.parse().unwrap();
         assert_eq!(result, Resp::ArrayNull);
@@ -807,7 +807,7 @@ mod tests {
     #[test]
     fn test_parse_array_containing_null() {
         let data = BytesMut::from(&b"*2\r\n+Hello\r\n$-1\r\n"[..]);
-        let mut cursor = Cursor::new(&data);
+        let mut cursor = Cursor::new(data);
         let mut parser = RespParser::new(&mut cursor);
         let result = parser.parse().unwrap();
         assert_eq!(result, Resp::Array(
@@ -821,7 +821,7 @@ mod tests {
     #[test]
     fn test_parse_null() {
         let data = BytesMut::from(&b"_\r\n"[..]);
-        let mut cursor = Cursor::new(&data);
+        let mut cursor = Cursor::new(data);
         let mut parser = RespParser::new(&mut cursor);
         let result = parser.parse().unwrap();
         assert_eq!(result, Resp::Null);
@@ -830,7 +830,7 @@ mod tests {
     #[test]
     fn test_parse_boolean_true() {
         let data = BytesMut::from(&b"#t\r\n"[..]);
-        let mut cursor = Cursor::new(&data);
+        let mut cursor = Cursor::new(data);
         let mut parser = RespParser::new(&mut cursor);
         let result = parser.parse().unwrap();
         assert_eq!(result, Resp::Boolean(true));
@@ -839,7 +839,7 @@ mod tests {
     #[test]
     fn test_parse_boolean_false() {
         let data = BytesMut::from(&b"#f\r\n"[..]);
-        let mut cursor = Cursor::new(&data);
+        let mut cursor = Cursor::new(data);
         let mut parser = RespParser::new(&mut cursor);
         let result = parser.parse().unwrap();
         assert_eq!(result, Resp::Boolean(false));
@@ -848,7 +848,7 @@ mod tests {
     #[test]
     fn test_parse_double() {
         let data = BytesMut::from(&b",1.23\r\n"[..]);
-        let mut cursor = Cursor::new(&data);
+        let mut cursor = Cursor::new(data);
         let mut parser = RespParser::new(&mut cursor);
         let result = parser.parse().unwrap();
         assert_eq!(result, Resp::Double(1.23));
@@ -857,7 +857,7 @@ mod tests {
     #[test]
     fn test_parse_double_negative() {
         let data = BytesMut::from(&b",-1.23\r\n"[..]);
-        let mut cursor = Cursor::new(&data);
+        let mut cursor = Cursor::new(data);
         let mut parser = RespParser::new(&mut cursor);
         let result = parser.parse().unwrap();
         assert_eq!(result, Resp::Double(-1.23));
@@ -866,7 +866,7 @@ mod tests {
     #[test]
     fn test_parse_double_int() {
         let data = BytesMut::from(&b",10\r\n"[..]);
-        let mut cursor = Cursor::new(&data);
+        let mut cursor = Cursor::new(data);
         let mut parser = RespParser::new(&mut cursor);
         let result = parser.parse().unwrap();
         assert_eq!(result, Resp::Double(10.0));
@@ -875,7 +875,7 @@ mod tests {
     #[test]
     fn test_parse_double_with_exponent() {
         let data = BytesMut::from(&b",1.23e-5\r\n"[..]);
-        let mut cursor = Cursor::new(&data);
+        let mut cursor = Cursor::new(data);
         let mut parser = RespParser::new(&mut cursor);
         let result = parser.parse().unwrap();
         assert_eq!(result, Resp::Double(0.0000123));
@@ -884,7 +884,7 @@ mod tests {
     #[test]
     fn test_parse_double_with_exponent_bigE() {
         let data = BytesMut::from(&b",1.23E-5\r\n"[..]);
-        let mut cursor = Cursor::new(&data);
+        let mut cursor = Cursor::new(data);
         let mut parser = RespParser::new(&mut cursor);
         let result = parser.parse().unwrap();
         assert_eq!(result, Resp::Double(0.0000123));
@@ -893,7 +893,7 @@ mod tests {
     #[test]
     fn test_parse_double_inf() {
         let data = BytesMut::from(&b",inf\r\n"[..]);
-        let mut cursor = Cursor::new(&data);
+        let mut cursor = Cursor::new(data);
         let mut parser = RespParser::new(&mut cursor);
         let result = parser.parse().unwrap();
         assert_eq!(result, Resp::Double(f64::INFINITY));
@@ -902,7 +902,7 @@ mod tests {
     #[test]
     fn test_parse_double_neg_inf() {
         let data = BytesMut::from(&b",-inf\r\n"[..]);
-        let mut cursor = Cursor::new(&data);
+        let mut cursor = Cursor::new(data);
         let mut parser = RespParser::new(&mut cursor);
         let result = parser.parse().unwrap();
         assert_eq!(result, Resp::Double(f64::NEG_INFINITY));
@@ -911,7 +911,7 @@ mod tests {
     #[test]
     fn test_parse_double_nan() {
         let data = BytesMut::from(&b",nan\r\n"[..]);
-        let mut cursor = Cursor::new(&data);
+        let mut cursor = Cursor::new(data);
         let mut parser = RespParser::new(&mut cursor);
         let result = parser.parse().unwrap();
         // you can't make equality comparisons with nan directly.
@@ -923,7 +923,7 @@ mod tests {
     #[test]
     fn test_parse_big_num() {
         let data = BytesMut::from(&b"(3492890328409238509324850943850943825024385\r\n"[..]);
-        let mut cursor = Cursor::new(&data);
+        let mut cursor = Cursor::new(data);
         let mut parser = RespParser::new(&mut cursor);
         let result = parser.parse().unwrap();
         assert_eq!(result, Resp::BigNumber(b"3492890328409238509324850943850943825024385".to_vec()));
@@ -932,7 +932,7 @@ mod tests {
     #[test]
     fn test_parse_big_num_neg() {
         let data = BytesMut::from(&b"(-3492890328409238509324850943850943825024385\r\n"[..]);
-        let mut cursor = Cursor::new(&data);
+        let mut cursor = Cursor::new(data);
         let mut parser = RespParser::new(&mut cursor);
         let result = parser.parse().unwrap();
         assert_eq!(result, Resp::BigNumber(b"-3492890328409238509324850943850943825024385".to_vec()));
@@ -941,7 +941,7 @@ mod tests {
     #[test]
     fn test_parse_bulk_err() {
         let data = BytesMut::from(&b"!21\r\nSYNTAX invalid syntax\r\n"[..]);
-        let mut cursor = Cursor::new(&data);
+        let mut cursor = Cursor::new(data);
         let mut parser = RespParser::new(&mut cursor);
         let result = parser.parse().unwrap();
         assert_eq!(result, Resp::BulkError(b"SYNTAX invalid syntax".to_vec()));
@@ -950,7 +950,7 @@ mod tests {
     #[test]
     fn test_parse_verbatim_string() {
         let data = BytesMut::from(&b"=15\r\ntxt:Some string\r\n"[..]);
-        let mut cursor = Cursor::new(&data);
+        let mut cursor = Cursor::new(data);
         let mut parser = RespParser::new(&mut cursor);
         let result = parser.parse().unwrap();
         assert_eq!(result, Resp::VerbatimString(b"txt:Some string".to_vec()));
@@ -959,7 +959,7 @@ mod tests {
     #[test]
     fn test_parse_map() {
         let data = BytesMut::from(&b"%2\r\n+first\r\n:1\r\n+second\r\n:2\r\n"[..]);
-        let mut cursor = Cursor::new(&data);
+        let mut cursor = Cursor::new(data);
         let mut parser = RespParser::new(&mut cursor);
         let result = parser.parse().unwrap();
         assert_eq!(result, Resp::Map(
@@ -973,7 +973,7 @@ mod tests {
     #[test]
     fn test_parse_set() {
         let data = BytesMut::from(&b"~4\r\n+first\r\n:1\r\n+second\r\n:2\r\n"[..]);
-        let mut cursor = Cursor::new(&data);
+        let mut cursor = Cursor::new(data);
         let mut parser = RespParser::new(&mut cursor);
         let result = parser.parse().unwrap();
         assert_eq!(result, Resp::Set(
@@ -989,7 +989,7 @@ mod tests {
     #[test]
     fn test_parse_push() {
         let data = BytesMut::from(&b">2\r\n+first\r\n:1\r\n"[..]);
-        let mut cursor = Cursor::new(&data);
+        let mut cursor = Cursor::new(data);
         let mut parser = RespParser::new(&mut cursor);
         let result = parser.parse().unwrap();
         assert_eq!(result, Resp::Push(
@@ -1003,7 +1003,7 @@ mod tests {
     #[test]
     fn test_parse_partial_stream() {
         let data = BytesMut::from(&b"+hello\r\n+world\r\n+partial..."[..]);
-        let mut cursor = Cursor::new(&data);
+        let mut cursor = Cursor::new(data);
         let mut parser = RespParser::new(&mut cursor);
         let result1 = parser.parse();
         let result2 = parser.parse();
@@ -1018,7 +1018,7 @@ mod tests {
     #[test]
     fn test_check_next_parse() {
         let data = BytesMut::from(&b"+hello\r\n+world\r\n+partial..."[..]);
-        let mut cursor = Cursor::new(&data);
+        let mut cursor = Cursor::new(data);
         let mut parser = RespParser::new(&mut cursor);
         let result1 = parser.check();
         assert_eq!(result1.unwrap(), Resp::SimpleString("hello".to_string()));

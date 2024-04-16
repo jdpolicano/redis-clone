@@ -32,9 +32,63 @@ impl Context {
     }
 
     // handle all commands with unlimited functionality.
-    pub async fn handle_all(mut self) -> io::Result<()> {
+    pub async fn handle_all(self) -> io::Result<()> {
+        if self.info.is_replica() {
+            self.replica_exec_all().await
+        } else {
+            self.master_exec_all().await
+        }
+    }
+    
+    // only handle a limited command set for this client. 
+    // this is used so the replica can receive and respond to certain commands without actually executing them.
+    // i.e., you can get info on the replica, but only the connection to the master will allow write commands.
+    pub async fn handle_limited(mut self) -> io::Result<()> {
         loop {
-            let message = self.stream.read_message().await?;
+            let (message, _msg_len) = self.stream.read_message().await?;
+            let cmd = CmdParser::parse(message.clone());
+
+            match cmd {
+                Cmd::Info(c) => {
+                    let handle = Handle {
+                        database: self.database.clone(),
+                        history: self.history.clone(),
+                        info: self.info.clone()
+                    };
+    
+                    c.execute(
+                        &mut self.stream, 
+                        handle
+                    ).await;
+    
+                    return Ok(());
+                },
+    
+                Cmd::Get(c) => {
+                    let handle = Handle {
+                        database: self.database.clone(),
+                        history: self.history.clone(),
+                        info: self.info.clone()
+                    };
+    
+                    c.execute(
+                        &mut self.stream, 
+                        handle
+                    ).await;
+                },
+    
+                _ => {
+                    self.stream.write_err("ERR direct messaging to replica not allowed").await?;
+                    // should error here but ok for now.
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    async fn master_exec_all(mut self) -> io::Result<()> {
+        loop {
+            let (message, _) = self.stream.read_message().await?;
             let cmd = CmdParser::parse(message.clone());
     
             match cmd {
@@ -48,10 +102,6 @@ impl Context {
                         history: self.history.clone(),
                         info: self.info.clone()
                     };
-
-                    if self.info.is_replica() {
-                        self.stream.close_write(); // close the write end of the stream. no need to send back messages right now.
-                    }
                     
                     let transaction = valid_cmd.execute(
                         &mut self.stream, 
@@ -59,51 +109,67 @@ impl Context {
                     ).await;
 
                     match transaction {
-                        Transaction::Replicate if !self.info.is_replica() => {
+                        Transaction::Replicate => {
                             // preserver this connection and move on.
                             self.history.add_replica(self.stream).await;
                             break Ok(());
                         }
 
-                        Transaction::Write if !self.info.is_replica() => {
+                        Transaction::Write => {
                             self.history.add_write(message).await;
                         }
 
-                        _ => {
-
-                        }
+                        _ => {}
                     }
                 }
             }
         }
     }
+
+    async fn replica_exec_all(mut self) -> io::Result<()> {
+        loop {
+            let (message, msg_len) = self.stream.read_message().await?;
+            let cmd = CmdParser::parse(message.clone());
+      
+            match cmd {
+                Cmd::Unexpected(err_msg) => {
+                    self.stream.write_err(&format!("ERR {}", err_msg)).await?;
+                }
     
-    // only handle a limited command set for this client. 
-    // this is used so the replica can receive and respond to certain commands without actually executing them.
-    // i.e., you can get info on the replica, but only the connection to the master will allow write commands.
-    pub async fn handle_limited(mut self) -> io::Result<()> {
-        let message = self.stream.read_message().await?;
-        let cmd = CmdParser::parse(message.clone());
-        match cmd {
-            Cmd::Info(c) => {
-                let handle = Handle {
-                    database: self.database.clone(),
-                    history: self.history.clone(),
-                    info: self.info.clone()
-                };
+                Cmd::ReplConf(c) => {
+                    let handle = Handle {
+                        database: self.database.clone(),
+                        history: self.history.clone(),
+                        info: self.info.clone()
+                    };
+    
+                    c.execute(
+                        &mut self.stream, 
+                        handle
+                    ).await;
+                }
+    
+                valid_cmd => {
+                    let handle = Handle {
+                        database: self.database.clone(),
+                        history: self.history.clone(),
+                        info: self.info.clone()
+                    };
 
-                c.execute(
-                    &mut self.stream, 
-                    handle
-                ).await;
+                    self.stream.close_write(); // close the write end of the stream. no need to send back messages right now.
+                    
+                    let _ = valid_cmd.execute(
+                        &mut self.stream, 
+                        handle
+                    ).await;
 
-                return Ok(());
-            },
-
-            _ => {
-                self.stream.write_err("ERR direct messaging to replica not allowed").await?;
-                return Ok(());
+                    self.stream.open_write(); // open the write end of the stream again.
+                }
             }
+
+            // after the command is processed update the offset we're at.
+            // in the error case need to decide if this should be incremented or not?
+            self.info.incr_master_repl_offset(msg_len as i64);
         }
     }
 }
